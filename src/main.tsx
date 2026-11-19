@@ -30,6 +30,7 @@ if (import.meta.env.DEV && typeof navigator !== 'undefined' && 'serviceWorker' i
 
 const rootEl = document.getElementById('root');
 if (rootEl) {
+  (window as unknown as { __PC_BOOTED__?: boolean }).__PC_BOOTED__ = true;
   createRoot(rootEl).render(
     <ErrorBoundary>
       <App />

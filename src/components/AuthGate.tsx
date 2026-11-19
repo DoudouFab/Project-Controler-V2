@@ -11,13 +11,6 @@ import {
   User,
 } from 'firebase/auth';
 import {
-  doc,
-  getDocFromServer,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-} from 'firebase/firestore';
-import {
   AlertTriangle,
   CheckCircle2,
   Clock,
@@ -129,6 +122,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     const path = `access_users/${user.uid}`;
 
     try {
+      const { doc, getDocFromServer, serverTimestamp, updateDoc } = await import('firebase/firestore');
       const snap = await new Promise<Awaited<ReturnType<typeof getDocFromServer>>>(
         (resolve, reject) => {
           const timer = window.setTimeout(() => {
@@ -402,6 +396,9 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     const emailId = normalizeEmailId(emailLower);
 
     try {
+      const { doc, getDocFromServer, serverTimestamp, setDoc, updateDoc } = await import(
+        'firebase/firestore'
+      );
       const preSnap = await getDocFromServer(doc(db, 'preauthorized_emails', emailId));
       if (!preSnap.exists()) {
         setCodeError(
@@ -488,6 +485,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     };
 
     try {
+      const { doc, serverTimestamp, setDoc } = await import('firebase/firestore');
       await setDoc(doc(db, 'access_users', user.uid), {
         ...newDoc,
         createdAt: serverTimestamp(),
