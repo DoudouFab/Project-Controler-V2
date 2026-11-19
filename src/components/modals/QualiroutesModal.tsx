@@ -24,7 +24,7 @@ interface QualiroutesModalProps {
   onClose: () => void;
 }
 
-const BUNDLED_QUALIROUTES_URL = '/assets/aistudio/Qualiroutes_2026_01_275f1d52.pdf';
+const BUNDLED_QUALIROUTES_URL = './assets/aistudio/Qualiroutes_2026_01_275f1d52.pdf';
 
 export const QualiroutesModal: React.FC<QualiroutesModalProps> = ({
   initialRef = '',
