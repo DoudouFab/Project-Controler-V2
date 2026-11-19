@@ -24,7 +24,7 @@ import {
 import {
   AccessUserDoc,
   ADMIN_EMAIL,
-  db,
+  getDb,
   handleFirestoreError,
   normalizeEmail,
   normalizeEmailId,
@@ -75,6 +75,7 @@ export const Tab8Acces: React.FC<Tab8AccesProps> = ({
     setLoading(true);
     setLoadError(null);
     try {
+      const db = await getDb();
       let preSnap;
       try {
         preSnap = await getDocsFromServer(collection(db, 'preauthorized_emails'));
@@ -133,6 +134,7 @@ export const Tab8Acces: React.FC<Tab8AccesProps> = ({
     const existingPre = preauthorized.find((p) => p.id === emailId);
 
     try {
+      const db = await getDb();
       if (existingPre) {
         try {
           await updateDoc(doc(db, 'preauthorized_emails', emailId), {
@@ -214,6 +216,7 @@ export const Tab8Acces: React.FC<Tab8AccesProps> = ({
       return;
     }
     try {
+      const db = await getDb();
       await updateDoc(doc(db, 'preauthorized_emails', entry.id), {
         accessCode: cleanCode,
         note: cleanNote,
@@ -240,6 +243,7 @@ export const Tab8Acces: React.FC<Tab8AccesProps> = ({
       onConfirm: () => {
         void (async () => {
           try {
+            const db = await getDb();
             try {
               await deleteDoc(doc(db, 'preauthorized_emails', entry.id));
             } catch (err) {
@@ -264,6 +268,7 @@ export const Tab8Acces: React.FC<Tab8AccesProps> = ({
 
   const handleSetUserStatus = async (u: AccessUserDoc, status: 'approved' | 'revoked') => {
     try {
+      const db = await getDb();
       await updateDoc(doc(db, 'access_users', u.uid), {
         status,
         updatedAt: serverTimestamp(),
@@ -289,6 +294,7 @@ export const Tab8Acces: React.FC<Tab8AccesProps> = ({
       onConfirm: () => {
         void (async () => {
           try {
+            const db = await getDb();
             await deleteDoc(doc(db, 'access_users', u.uid));
             onNotify('success', `Fiche appareil supprimée pour ${u.email}.`);
             await loadAllLists();

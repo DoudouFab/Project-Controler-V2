@@ -5,7 +5,7 @@ import {
   setPersistence,
   User,
 } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import type { Firestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 export const ADMIN_EMAIL = 'pirquinfabien@gmail.com';
@@ -13,9 +13,18 @@ const ACCESS_CACHE_KEY = 'projectcontroller_access_cache_v1';
 
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = firebaseConfig.firestoreDatabaseId
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(app);
+
+let dbPromise: Promise<Firestore> | null = null;
+export async function getDb(): Promise<Firestore> {
+  if (!dbPromise) {
+    dbPromise = import('firebase/firestore').then(({ getFirestore }) =>
+      firebaseConfig.firestoreDatabaseId
+        ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
+        : getFirestore(app)
+    );
+  }
+  return dbPromise;
+}
 
 // Persister la session localement pour le fonctionnement hors-ligne
 setPersistence(auth, browserLocalPersistence).catch(() => {

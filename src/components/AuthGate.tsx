@@ -26,7 +26,7 @@ import {
   AccessUserDoc,
   auth,
   clearCachedApproval,
-  db,
+  getDb,
   detectDeviceHint,
   handleFirestoreError,
   isAdminUser,
@@ -122,7 +122,10 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     const path = `access_users/${user.uid}`;
 
     try {
-      const { doc, getDocFromServer, serverTimestamp, updateDoc } = await import('firebase/firestore');
+      const [{ doc, getDocFromServer, serverTimestamp, updateDoc }, db] = await Promise.all([
+        import('firebase/firestore'),
+        getDb(),
+      ]);
       const snap = await new Promise<Awaited<ReturnType<typeof getDocFromServer>>>(
         (resolve, reject) => {
           const timer = window.setTimeout(() => {
@@ -396,9 +399,10 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     const emailId = normalizeEmailId(emailLower);
 
     try {
-      const { doc, getDocFromServer, serverTimestamp, setDoc, updateDoc } = await import(
-        'firebase/firestore'
-      );
+      const [{ doc, getDocFromServer, serverTimestamp, setDoc, updateDoc }, db] = await Promise.all([
+        import('firebase/firestore'),
+        getDb(),
+      ]);
       const preSnap = await getDocFromServer(doc(db, 'preauthorized_emails', emailId));
       if (!preSnap.exists()) {
         setCodeError(
@@ -485,7 +489,10 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     };
 
     try {
-      const { doc, serverTimestamp, setDoc } = await import('firebase/firestore');
+      const [{ doc, serverTimestamp, setDoc }, db] = await Promise.all([
+        import('firebase/firestore'),
+        getDb(),
+      ]);
       await setDoc(doc(db, 'access_users', user.uid), {
         ...newDoc,
         createdAt: serverTimestamp(),
