@@ -19,30 +19,33 @@ export default defineConfig(() => {
           'pwa-maskable-512x512.png',
         ],
         manifest: {
-          name: 'ProjectController — INASEP',
+          id: '/',
+          name: 'ProjectController',
           short_name: 'ProjectCtrl',
           description:
-            "Gestion de chantier d'égouttage et voirie — bordereau 3P, tronçons, carnet de mesurage, EA et délais INASEP.",
+            "Gestion de chantier d'égouttage et voirie — bordereau 3P, tronçons, carnet de mesurage, EA et délais.",
           theme_color: '#1e3a5f',
           background_color: '#0f172a',
           display: 'standalone',
           orientation: 'any',
           lang: 'fr',
-          start_url: './',
-          scope: './',
+          start_url: '/',
+          scope: '/',
           icons: [
             {
-              src: 'pwa-192x192.png',
+              src: '/pwa-192x192.png',
               sizes: '192x192',
               type: 'image/png',
+              purpose: 'any',
             },
             {
-              src: 'pwa-512x512.png',
+              src: '/pwa-512x512.png',
               sizes: '512x512',
               type: 'image/png',
+              purpose: 'any',
             },
             {
-              src: 'pwa-maskable-512x512.png',
+              src: '/pwa-maskable-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
@@ -50,9 +53,13 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
           globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,woff2}'],
           globIgnores: ['**/assets/aistudio/**', '**/exemple_hamois.json'],
           maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+          navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
@@ -75,8 +82,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
     ],

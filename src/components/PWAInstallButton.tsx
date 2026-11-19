@@ -72,7 +72,7 @@ export const PWAInstallButton: React.FC = () => {
               ) : (
                 <>
                   <p>
-                    Pour installer <strong>ProjectController — INASEP</strong> sur votre ordinateur ou téléphone Android :
+                    Pour installer <strong>ProjectController</strong> sur votre ordinateur ou téléphone Android :
                   </p>
                   <ol className="list-decimal pl-4 space-y-1.5">
                     <li>

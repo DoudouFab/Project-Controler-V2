@@ -1,9 +1,6 @@
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { MetreRecapPoste, PosteMarche } from '../types/project';
 import { NRM } from './calculations';
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 export interface MetreRecapParseResult {
   fileName: string;
@@ -64,6 +61,8 @@ export async function parseMetreRecapPdf(
   onProgress?: (pct: number) => void
 ): Promise<MetreRecapParseResult> {
   onProgress?.(2);
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
   const doc = await loadingTask.promise;
   const totalPages = doc.numPages;

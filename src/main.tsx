@@ -4,10 +4,28 @@ import App from './App.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import './index.css';
 
-try {
-  registerSW({ immediate: true });
-} catch {
-  // Service worker optionnel selon l'environnement
+if (import.meta.env.DEV && typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker
+    .getRegistrations()
+    .then((regs) => {
+      regs.forEach((r) => {
+        void r.unregister();
+      });
+    })
+    .catch(() => {
+      // Ignorer
+    });
+} else {
+  try {
+    const updateSW = registerSW({
+      immediate: true,
+      onNeedRefresh() {
+        void updateSW(true);
+      },
+    });
+  } catch {
+    // Service worker optionnel selon l'environnement
+  }
 }
 
 const rootEl = document.getElementById('root');

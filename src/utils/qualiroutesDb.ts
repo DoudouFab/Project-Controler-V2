@@ -1,8 +1,5 @@
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import { normalizeQualiroutesRef } from './calculations';
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 const DB_NAME = 'projectcontroller_qualiroutes_db';
 const DB_VERSION = 1;
@@ -132,6 +129,8 @@ export async function indexQualiroutesPdfBuffer(
   onProgress?: (pct: number, detail: string) => void
 ): Promise<QualiroutesMeta> {
   onProgress?.(2, 'Ouverture du document PDF…');
+  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
   const pdf = await loadingTask.promise;
   const numPages = pdf.numPages;

@@ -43,6 +43,14 @@ function openDb(): Promise<IDBDatabase> {
       reject(new Error('IndexedDB indisponible'));
       return;
     }
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(new Error('Délai dépassé ouverture IndexedDB'));
+      }
+    }, 3000);
+
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
@@ -57,8 +65,27 @@ function openDb(): Promise<IDBDatabase> {
         db.createObjectStore(STORE_PREFS, { keyPath: 'id' });
       }
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error || new Error('Erreur ouverture IndexedDB'));
+    req.onsuccess = () => {
+      window.clearTimeout(timer);
+      if (!settled) {
+        settled = true;
+        resolve(req.result);
+      }
+    };
+    req.onerror = () => {
+      window.clearTimeout(timer);
+      if (!settled) {
+        settled = true;
+        reject(req.error || new Error('Erreur ouverture IndexedDB'));
+      }
+    };
+    req.onblocked = () => {
+      window.clearTimeout(timer);
+      if (!settled) {
+        settled = true;
+        reject(new Error('IndexedDB bloquée par un autre onglet'));
+      }
+    };
   });
 }
 

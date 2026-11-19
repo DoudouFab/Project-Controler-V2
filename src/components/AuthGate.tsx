@@ -29,7 +29,6 @@ import {
   ShieldCheck,
   WifiOff,
 } from 'lucide-react';
-import { INASEP_LOGO_BASE64 } from '../constants/inasep';
 import {
   AccessUserDoc,
   auth,
@@ -130,7 +129,22 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     const path = `access_users/${user.uid}`;
 
     try {
-      const snap = await getDocFromServer(doc(db, 'access_users', user.uid));
+      const snap = await new Promise<Awaited<ReturnType<typeof getDocFromServer>>>(
+        (resolve, reject) => {
+          const timer = window.setTimeout(() => {
+            reject(new Error('unavailable: délai de connexion dépassé'));
+          }, 6000);
+          getDocFromServer(doc(db, 'access_users', user.uid))
+            .then((res) => {
+              window.clearTimeout(timer);
+              resolve(res);
+            })
+            .catch((e) => {
+              window.clearTimeout(timer);
+              reject(e);
+            });
+        }
+      );
       if (!snap.exists()) {
         clearCachedApproval();
         setStage({ kind: 'enter_code', user, accessDoc: null });
@@ -226,17 +240,42 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   }, []);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      setAuthError(null);
-      setAuthInfo(null);
-      setCodeError(null);
-      if (!user) {
+    let settled = false;
+    const bootTimer = window.setTimeout(() => {
+      if (settled) return;
+      if (auth.currentUser) {
+        settled = true;
+        void checkUserAccess(auth.currentUser, false);
+      } else {
+        settled = true;
         setStage({ kind: 'login' });
-        return;
       }
-      void checkUserAccess(user, false);
-    });
-    return () => unsub();
+    }, 4000);
+
+    const unsub = onAuthStateChanged(
+      auth,
+      (user) => {
+        settled = true;
+        window.clearTimeout(bootTimer);
+        setAuthError(null);
+        setAuthInfo(null);
+        setCodeError(null);
+        if (!user) {
+          setStage({ kind: 'login' });
+          return;
+        }
+        void checkUserAccess(user, false);
+      },
+      () => {
+        settled = true;
+        window.clearTimeout(bootTimer);
+        setStage({ kind: 'login' });
+      }
+    );
+    return () => {
+      window.clearTimeout(bootTimer);
+      unsub();
+    };
   }, [checkUserAccess]);
 
   const handleSignOut = async () => {
@@ -473,15 +512,13 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-lg overflow-hidden">
-        {/* En-tête INASEP */}
+        {/* En-tête application */}
         <div className="px-6 py-5 bg-[#1e3a5f] text-white flex items-center gap-3.5">
-          <img
-            src={INASEP_LOGO_BASE64}
-            alt="INASEP"
-            className="h-10 w-auto rounded bg-white p-1 shrink-0"
-          />
+          <div className="w-10 h-10 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0">
+            <ShieldCheck className="w-5 h-5 text-sky-200" />
+          </div>
           <div className="min-w-0">
-            <h1 className="text-base font-bold tracking-tight">ProjectController — INASEP</h1>
+            <h1 className="text-base font-bold tracking-tight">ProjectController</h1>
             <p className="text-xs text-sky-100/90">
               Gestion de chantier, mesurage &amp; suivi des délais
             </p>
@@ -490,7 +527,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
 
         <div className="p-6">
           {(stage.kind === 'booting' || stage.kind === 'checking_access') && (
-            <div className="py-8 flex flex-col items-center text-center gap-3">
+            <div className="py-6 flex flex-col items-center text-center gap-3">
               <div className="w-8 h-8 border-2 border-[#1e3a5f] dark:border-sky-400 border-t-transparent rounded-full animate-spin" />
               <div className="text-sm font-semibold">
                 {stage.kind === 'booting'
@@ -500,6 +537,21 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
               <p className="text-xs text-slate-500 dark:text-slate-400">
                 Lecture sécurisée de votre autorisation appareil.
               </p>
+              <button
+                type="button"
+                onClick={() => {
+                  if (stage.kind === 'checking_access') {
+                    void handleSignOut();
+                  } else {
+                    setStage({ kind: 'login' });
+                  }
+                }}
+                className="mt-1 text-xs text-sky-700 dark:text-sky-400 hover:underline cursor-pointer"
+              >
+                {stage.kind === 'checking_access'
+                  ? 'Annuler / Changer de compte'
+                  : 'Afficher l’écran de connexion'}
+              </button>
             </div>
           )}
 
@@ -606,14 +658,14 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
 
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                      Adresse e-mail professionnelle (ex. @inasep.be)
+                      Adresse e-mail professionnelle
                     </label>
                     <input
                       type="email"
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="prenom.nom@inasep.be"
+                      placeholder="prenom.nom@entreprise.be"
                       className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
                     />
                   </div>
