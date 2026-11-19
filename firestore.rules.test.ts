@@ -1,0 +1,192 @@
+/**
+ * Tests de référence pour valider les « Dirty Dozen » contre l'émulateur Firestore (@firebase/rules-unit-testing).
+ * Exécutable en environnement CI/émulateur Firestore local.
+ */
+export interface DirtyDozenScenario {
+  id: number;
+  name: string;
+  actor: { uid: string; email: string; email_verified: boolean } | null;
+  operation: 'get' | 'list' | 'create' | 'update' | 'delete';
+  path: string;
+  payload?: Record<string, unknown>;
+  expected: 'PERMISSION_DENIED';
+}
+
+export const DIRTY_DOZEN_SCENARIOS: DirtyDozenScenario[] = [
+  {
+    id: 1,
+    name: 'Admin spoofing avec email_verified=false',
+    actor: { uid: 'attacker1', email: 'pirquinfabien@gmail.com', email_verified: false },
+    operation: 'list',
+    path: 'preauthorized_emails',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 2,
+    name: 'Auto-élévation role=admin sur access_users',
+    actor: { uid: 'user1', email: 'collegue@inasep.be', email_verified: true },
+    operation: 'create',
+    path: 'access_users/user1',
+    payload: {
+      uid: 'user1',
+      email: 'collegue@inasep.be',
+      displayName: 'Collègue',
+      role: 'admin',
+      status: 'approved',
+      deviceHint: 'Chrome',
+      note: '',
+      activationCode: '123456',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 3,
+    name: 'Auto-approbation sans document preauthorized_emails',
+    actor: { uid: 'user2', email: 'inconnu@inasep.be', email_verified: true },
+    operation: 'create',
+    path: 'access_users/user2',
+    payload: {
+      uid: 'user2',
+      email: 'inconnu@inasep.be',
+      displayName: 'Inconnu',
+      role: 'user',
+      status: 'approved',
+      deviceHint: 'Edge',
+      note: '',
+      activationCode: '999999',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 4,
+    name: 'Auto-approbation avec mauvais activationCode',
+    actor: { uid: 'user3', email: 'collegue@inasep.be', email_verified: true },
+    operation: 'create',
+    path: 'access_users/user3',
+    payload: {
+      uid: 'user3',
+      email: 'collegue@inasep.be',
+      displayName: 'Collègue',
+      role: 'user',
+      status: 'approved',
+      deviceHint: 'Firefox',
+      note: '',
+      activationCode: 'WRONG',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 5,
+    name: 'Contournement statut revoked -> approved',
+    actor: { uid: 'revokedUser', email: 'revoked@inasep.be', email_verified: true },
+    operation: 'update',
+    path: 'access_users/revokedUser',
+    payload: {
+      status: 'approved',
+      activationCode: '123456',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 6,
+    name: 'Usurpation uid ou email à la création',
+    actor: { uid: 'user6', email: 'user6@inasep.be', email_verified: true },
+    operation: 'create',
+    path: 'access_users/user6',
+    payload: {
+      uid: 'victim_uid',
+      email: 'autre@inasep.be',
+      displayName: 'Spoof',
+      role: 'user',
+      status: 'pending',
+      deviceHint: 'Chrome',
+      note: '',
+      activationCode: '',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 7,
+    name: 'Shadow Update avec champ fantôme bypassAdmin',
+    actor: { uid: 'user7', email: 'user7@inasep.be', email_verified: true },
+    operation: 'create',
+    path: 'access_users/user7',
+    payload: {
+      uid: 'user7',
+      email: 'user7@inasep.be',
+      displayName: 'User 7',
+      role: 'user',
+      status: 'pending',
+      deviceHint: 'Chrome',
+      note: '',
+      activationCode: '',
+      bypassAdmin: true,
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 8,
+    name: 'Horodatage client falsifié (pas request.time)',
+    actor: { uid: 'user8', email: 'user8@inasep.be', email_verified: true },
+    operation: 'create',
+    path: 'access_users/user8',
+    payload: {
+      uid: 'user8',
+      email: 'user8@inasep.be',
+      displayName: 'User 8',
+      role: 'user',
+      status: 'pending',
+      deviceHint: 'Safari',
+      note: '',
+      activationCode: '',
+      createdAt: '2020-01-01T00:00:00Z',
+      updatedAt: '2020-01-01T00:00:00Z',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 9,
+    name: 'Mutation du champ immuable createdAt ou email lors d un update',
+    actor: { uid: 'user9', email: 'user9@inasep.be', email_verified: true },
+    operation: 'update',
+    path: 'access_users/user9',
+    payload: {
+      email: 'admin@inasep.be',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 10,
+    name: 'Lecture PII de la fiche access_users d un autre collègue',
+    actor: { uid: 'user10', email: 'user10@inasep.be', email_verified: true },
+    operation: 'get',
+    path: 'access_users/other_uid',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 11,
+    name: 'List scraping sur preauthorized_emails par un non-admin',
+    actor: { uid: 'user11', email: 'user11@inasep.be', email_verified: true },
+    operation: 'list',
+    path: 'preauthorized_emails',
+    expected: 'PERMISSION_DENIED',
+  },
+  {
+    id: 12,
+    name: 'Dépassement de taille DoW (displayName > 120 chars)',
+    actor: { uid: 'user12', email: 'user12@inasep.be', email_verified: true },
+    operation: 'create',
+    path: 'access_users/user12',
+    payload: {
+      uid: 'user12',
+      email: 'user12@inasep.be',
+      displayName: 'A'.repeat(5000),
+      role: 'user',
+      status: 'pending',
+      deviceHint: 'Chrome',
+      note: '',
+      activationCode: '',
+    },
+    expected: 'PERMISSION_DENIED',
+  },
+];

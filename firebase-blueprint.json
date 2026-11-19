@@ -1,0 +1,140 @@
+{
+  "entities": {
+    "PreauthorizedEmail": {
+      "title": "PreauthorizedEmail",
+      "description": "Adresse e-mail préautorisée par l'administrateur avec son code personnel d'activation.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identifiant normalisé de l'e-mail (minuscules, caractères hors [a-z0-9-] remplacés par _).",
+          "minLength": 3,
+          "maxLength": 128,
+          "pattern": "^[a-z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Adresse e-mail en minuscules.",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "accessCode": {
+          "type": "string",
+          "description": "Code personnel saisi ou généré par l'administrateur.",
+          "minLength": 3,
+          "maxLength": 32
+        },
+        "note": {
+          "type": "string",
+          "description": "Note optionnelle (nom, équipe, commentaire).",
+          "maxLength": 200
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "UID de l'administrateur créateur.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Horodatage serveur de création."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Horodatage serveur de dernière modification."
+        }
+      },
+      "required": ["id", "email", "accessCode", "note", "createdBy", "createdAt", "updatedAt"]
+    },
+    "AccessUser": {
+      "title": "AccessUser",
+      "description": "Fiche d'accès d'un appareil/compte utilisateur connecté à l'application.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "UID Firebase Auth de l'utilisateur.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Adresse e-mail normalisée en minuscules.",
+          "minLength": 3,
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Nom d'affichage issu du profil ou saisi.",
+          "maxLength": 120
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "user"],
+          "description": "Rôle applicatif de l'utilisateur."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "revoked"],
+          "description": "Statut d'accès de l'appareil."
+        },
+        "deviceHint": {
+          "type": "string",
+          "description": "Indication synthétique de l'appareil/navigateur.",
+          "maxLength": 120
+        },
+        "note": {
+          "type": "string",
+          "description": "Note associée (copiée de la préautorisation ou ajoutée par l'admin).",
+          "maxLength": 200
+        },
+        "activationCode": {
+          "type": "string",
+          "description": "Code personnel utilisé lors de l'activation (vide si en attente sans code).",
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Horodatage serveur de création."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Horodatage serveur de mise à jour."
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "displayName",
+        "role",
+        "status",
+        "deviceHint",
+        "note",
+        "activationCode",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/preauthorized_emails/{emailId}": {
+      "schema": {
+        "$ref": "#/entities/PreauthorizedEmail"
+      },
+      "description": "Liste des e-mails préautorisés et de leur code personnel d'activation."
+    },
+    "/access_users/{uid}": {
+      "schema": {
+        "$ref": "#/entities/AccessUser"
+      },
+      "description": "Statut d'accès par compte/appareil authentifié."
+    }
+  }
+}

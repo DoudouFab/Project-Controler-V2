@@ -1,0 +1,270 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Verrou global par défaut : tout ce qui n'est pas explicitement autorisé est refusé
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Primitives de sécurité
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isColleagueVerified() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email is string
+        && (
+          request.auth.token.email_verified == true
+          || request.auth.token.firebase.sign_in_provider == 'google.com'
+        );
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email != null
+        && request.auth.token.email is string
+        && request.auth.token.email_verified == true
+        && request.auth.token.email.lower() == 'pirquinfabien@gmail.com';
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string
+        && id.size() >= 1
+        && id.size() <= 128
+        && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function emailToId(email) {
+      return email.lower().replace('[^a-z0-9-]', '_');
+    }
+
+    function isOwnerVerifiedEmail(emailId) {
+      return isColleagueVerified()
+        && emailToId(request.auth.token.email) == emailId;
+    }
+
+    // 3. Blueprints de validation (Anti-Update-Gap)
+    function isValidPreauthorizedEmail(data, emailId) {
+      return data.keys().hasAll([
+          'id',
+          'email',
+          'accessCode',
+          'note',
+          'createdBy',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id',
+          'email',
+          'accessCode',
+          'note',
+          'createdBy',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.id is string
+        && data.id == emailId
+        && data.id.size() >= 3
+        && data.id.size() <= 128
+        && data.id.matches('^[a-z0-9_\\-]+$')
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 128
+        && data.email == data.email.lower()
+        && emailToId(data.email) == emailId
+        && data.accessCode is string
+        && data.accessCode.size() >= 3
+        && data.accessCode.size() <= 32
+        && data.note is string
+        && data.note.size() <= 200
+        && data.createdBy is string
+        && data.createdBy.size() >= 1
+        && data.createdBy.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAccessUser(data, docUid) {
+      return data.keys().hasAll([
+          'uid',
+          'email',
+          'displayName',
+          'role',
+          'status',
+          'deviceHint',
+          'note',
+          'activationCode',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'uid',
+          'email',
+          'displayName',
+          'role',
+          'status',
+          'deviceHint',
+          'note',
+          'activationCode',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.uid is string
+        && data.uid == docUid
+        && data.uid.size() >= 1
+        && data.uid.size() <= 128
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 128
+        && data.email == data.email.lower()
+        && data.displayName is string
+        && data.displayName.size() <= 120
+        && data.role in ['admin', 'user']
+        && data.status in ['pending', 'approved', 'revoked']
+        && data.deviceHint is string
+        && data.deviceHint.size() <= 120
+        && data.note is string
+        && data.note.size() <= 200
+        && data.activationCode is string
+        && data.activationCode.size() <= 32
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function matchesPreauthorizedCode(emailId, code) {
+      return code is string
+        && code.size() >= 3
+        && code.size() <= 32
+        && exists(/databases/$(database)/documents/preauthorized_emails/$(emailId))
+        && get(/databases/$(database)/documents/preauthorized_emails/$(emailId)).data.accessCode.lower() == code.lower();
+    }
+
+    // 4. Collection preauthorized_emails/{emailId}
+    match /preauthorized_emails/{emailId} {
+      allow get: if isValidId(emailId) && (isAdmin() || isOwnerVerifiedEmail(emailId));
+      allow list: if isAdmin();
+
+      allow create: if isAdmin()
+        && isValidId(emailId)
+        && isValidPreauthorizedEmail(incoming(), emailId)
+        && incoming().createdBy == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isAdmin()
+        && isValidId(emailId)
+        && isValidPreauthorizedEmail(incoming(), emailId)
+        && incoming().id == existing().id
+        && incoming().email == existing().email
+        && incoming().createdBy == existing().createdBy
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'accessCode',
+          'note',
+          'updatedAt'
+        ]);
+
+      allow delete: if isAdmin() && isValidId(emailId);
+    }
+
+    // 5. Collection access_users/{uid}
+    match /access_users/{uid} {
+      allow get: if isValidId(uid) && (isAdmin() || (isSignedIn() && request.auth.uid == uid));
+      allow list: if isAdmin();
+
+      allow create: if isValidId(uid)
+        && isValidAccessUser(incoming(), uid)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin()
+          || (
+            isColleagueVerified()
+            && request.auth.uid == uid
+            && incoming().uid == request.auth.uid
+            && incoming().email == request.auth.token.email.lower()
+            && incoming().role == 'user'
+            && (
+              (
+                incoming().status == 'pending'
+                && incoming().activationCode == ''
+                && incoming().note == ''
+              )
+              || (
+                incoming().status == 'approved'
+                && matchesPreauthorizedCode(emailToId(request.auth.token.email), incoming().activationCode)
+              )
+            )
+          )
+        );
+
+      allow update: if isValidId(uid)
+        && isValidAccessUser(incoming(), uid)
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (
+            isAdmin()
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'status',
+              'role',
+              'note',
+              'displayName',
+              'deviceHint',
+              'activationCode',
+              'updatedAt'
+            ])
+          )
+          || (
+            isColleagueVerified()
+            && request.auth.uid == uid
+            && existing().status != 'revoked'
+            && incoming().role == existing().role
+            && (
+              // Action 1 : activation par code personnel (pending -> approved)
+              (
+                existing().status == 'pending'
+                && incoming().status == 'approved'
+                && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'status',
+                  'activationCode',
+                  'displayName',
+                  'deviceHint',
+                  'note',
+                  'updatedAt'
+                ])
+                && matchesPreauthorizedCode(emailToId(request.auth.token.email), incoming().activationCode)
+              )
+              // Action 2 : mise à jour métadonnées profil/appareil uniquement
+              || (
+                incoming().status == existing().status
+                && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'displayName',
+                  'deviceHint',
+                  'updatedAt'
+                ])
+              )
+            )
+          )
+        );
+
+      allow delete: if isAdmin() && isValidId(uid);
+    }
+  }
+}

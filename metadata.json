@@ -1,0 +1,8 @@
+{
+  "name": "V2ProjectController — INASEP",
+  "description": "Gestion de chantier d\u0027égouttage et voirie — bordereau 3P, encodage des tronçons, carnet de mesurage automatisé, états d\u0027avancement et suivi des délais INASEP.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
