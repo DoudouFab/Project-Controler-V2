@@ -137,7 +137,9 @@ export const Tab3Carnet: React.FC<Tab3CarnetProps> = ({
       if (!q) return true;
       return (
         NRM(l.posteId || '').includes(q) ||
+        NRM(l.posteEff?.code || '').includes(q) ||
         NRM(l.posteEff?.desc || '').includes(q) ||
+        NRM(l.posteEff?.remarques || '').includes(q) ||
         NRM(l.libTroncon).includes(q) ||
         NRM(l.libPrestation).includes(q) ||
         NRM(l.annotation).includes(q)
@@ -973,6 +975,11 @@ export const Tab3Carnet: React.FC<Tab3CarnetProps> = ({
                                 </span>
                               </div>
                             </div>
+                            {grp.poste?.remarques && (
+                              <div className="no-print mt-1.5 px-2.5 py-1 rounded border border-slate-200 dark:border-slate-700/80 bg-white/80 dark:bg-slate-900/70 text-[11px] font-normal text-slate-600 dark:text-slate-300 whitespace-pre-line leading-relaxed">
+                                {grp.poste.remarques}
+                              </div>
+                            )}
                           </td>
                         </tr>
                       )}

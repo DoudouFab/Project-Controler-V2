@@ -1,17 +1,36 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, FileSpreadsheet, Lock, PlusCircle } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileSpreadsheet, FolderArchive, Lock, PlusCircle } from 'lucide-react';
 import { CarnetLineItem, DetailPosteEA, HistoriqueEA, PosteMarche, ProjectData } from '../types/project';
 import {
   cleCetBilled,
   construireLignesCarnet,
+  extraireQtesCochees,
+  extraireQtesTotales,
   fmt,
   getTronconCetEffectiveEA,
   mnt,
   prochainNumeroEA,
   srcP,
 } from '../utils/calculations';
-import { exportEaEnCoursExcel } from '../utils/excelExports';
+import {
+  CumulExportRow,
+  exportDossierEaCompletExcel,
+  exportEaEnCoursExcel,
+} from '../utils/excelExports';
 import { PrintHeader } from './PrintHeader';
+
+function todayIsoDate(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function isoToFrDate(iso: string): string {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : new Date().toLocaleDateString('fr-FR');
+}
 
 interface Tab4EaEnCoursProps {
   appData: ProjectData;
@@ -49,6 +68,8 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
   const [showQAvant, setShowQAvant] = useState(true);
   const [showQCumul, setShowQCumul] = useState(true);
   const [expandedPostes, setExpandedPostes] = useState<Set<string>>(new Set());
+  const [dateArrete, setDateArrete] = useState<string>(() => todayIsoDate());
+  const [remarqueEA, setRemarqueEA] = useState<string>('');
 
   const allPostes = useMemo(() => srcP(appData), [appData]);
   const eaIndice = useMemo(
@@ -115,6 +136,23 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
     [rows]
   );
 
+  const cumulRows = useMemo<CumulExportRow[]>(() => {
+    const qTot = extraireQtesTotales(appData);
+    const qCoch = extraireQtesCochees(appData);
+    return allPostes.map((p) => {
+      const qCumul = qTot.get(p.id) || 0;
+      const qEA = qCoch.get(p.id) || 0;
+      const qAvant = qCumul - qEA;
+      const solde = p.qte - qCumul;
+      const mBudget = mnt(p.qte, p.pu);
+      const mReel = mnt(qCumul, p.pu);
+      const mEA = mnt(qEA, p.pu);
+      const ecart = mReel - mBudget;
+      const pct = p.qte > 0 ? (qCumul / p.qte) * 100 : qCumul > 0 ? 999 : 0;
+      return { p, mBudget, qAvant, qEA, mEA, qCumul, mReel, solde, pct, ecart };
+    });
+  }, [appData, allPostes]);
+
   const executeCloture = () => {
     const detail: DetailPosteEA[] = rows.map((r) => ({
       posteId: r.poste.id,
@@ -122,9 +160,11 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
       montant: r.mEA,
     }));
 
+    const remClean = remarqueEA.trim();
     const newEA: HistoriqueEA = {
       indice: eaIndice,
-      date: new Date().toLocaleDateString('fr-FR'),
+      date: isoToFrDate(dateArrete),
+      ...(remClean ? { remarque: remClean } : {}),
       montant: totalEA,
       detailParPoste: detail,
     };
@@ -195,6 +235,7 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
       };
     });
 
+    setRemarqueEA('');
     onNotify('success', `${eaIndice} clôturé et archivé (${fmt(totalEA)} €).`);
     onAfterCloseEA();
   };
@@ -217,6 +258,8 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
     onConfirm({
       title: `Clôturer & Archiver ${eaIndice} ?`,
       message:
+        `Date d'arrêté : ${isoToFrDate(dateArrete)}\n` +
+        (remarqueEA.trim() ? `Remarque : ${remarqueEA.trim()}\n` : '') +
         `Montant de l'état d'avancement : ${fmt(totalEA)} € (${rows.length} poste(s), ${checkedLines.length} ligne(s)).\n\n` +
         `Les lignes incluses seront verrouillées sous ${eaIndice} avec capture de leur quantité et poste actuels.`,
       confirmLabel: `Clôturer ${eaIndice}`,
@@ -228,13 +271,16 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
     onConfirm({
       title: `Insérer ${eaIndice} comme EA Néant (0,00 €) ?`,
       message:
+        `Date d'arrêté : ${isoToFrDate(dateArrete)}\n` +
         `L'état d'avancement en cours passera automatiquement au numéro suivant.\n` +
         `Aucune ligne cochée dans le Carnet de Mesurage ne sera modifiée.`,
       confirmLabel: `Insérer ${eaIndice} Néant`,
       onConfirm: () => {
+        const remClean = remarqueEA.trim();
         const nullEA: HistoriqueEA = {
           indice: eaIndice,
-          date: new Date().toLocaleDateString('fr-FR'),
+          date: isoToFrDate(dateArrete),
+          ...(remClean ? { remarque: remClean } : {}),
           montant: 0,
           detailParPoste: [],
         };
@@ -242,6 +288,7 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
           ...prev,
           historiqueEA: [...(prev.historiqueEA || []), nullEA],
         }));
+        setRemarqueEA('');
         onNotify('info', `${eaIndice} (Néant — 0,00 €) inséré dans l'historique.`);
       },
     });
@@ -276,12 +323,41 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
             type="button"
             disabled={rows.length === 0}
             onClick={() => {
-              exportEaEnCoursExcel(appData, eaIndice, rows, totalEA);
+              exportEaEnCoursExcel(appData, eaIndice, rows, totalEA, {
+                dateArrete: isoToFrDate(dateArrete),
+                remarque: remarqueEA.trim() || undefined,
+              });
               onNotify('success', `Export Excel ${eaIndice} généré.`);
             }}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 disabled:opacity-40 text-emerald-800 dark:text-emerald-300 cursor-pointer whitespace-nowrap"
           >
-            <FileSpreadsheet className="w-3.5 h-3.5" /> Export Excel
+            <FileSpreadsheet className="w-3.5 h-3.5" /> Export EA (.xlsx)
+          </button>
+          <button
+            type="button"
+            disabled={rows.length === 0}
+            onClick={() => {
+              exportDossierEaCompletExcel(
+                appData,
+                eaIndice,
+                rows,
+                totalEA,
+                checkedLines,
+                cumulRows,
+                {
+                  dateArrete: isoToFrDate(dateArrete),
+                  remarque: remarqueEA.trim() || undefined,
+                }
+              );
+              onNotify(
+                'success',
+                `Dossier EA complet généré (Synthèse + Détail + Carnet + Cumul).`
+              );
+            }}
+            title="Génère un classeur unique multi-onglets : Synthèse EA, Détail, Extrait Carnet et Cumul & Concordance"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/60 disabled:opacity-40 text-sky-800 dark:text-sky-300 cursor-pointer whitespace-nowrap"
+          >
+            <FolderArchive className="w-3.5 h-3.5" /> Dossier EA complet
           </button>
           <button
             type="button"
@@ -300,8 +376,34 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
         </div>
       </div>
 
-      {/* Options d'affichage */}
+      {/* Date d'arrêté, remarque EA & options d'affichage */}
       <div className="no-print bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="flex flex-wrap items-center gap-3 flex-1 min-w-[260px]">
+          <div className="flex items-center gap-1.5">
+            <label className="text-slate-600 dark:text-slate-400 font-medium whitespace-nowrap">
+              Date d'arrêté :
+            </label>
+            <input
+              type="date"
+              value={dateArrete}
+              onChange={(e) => setDateArrete(e.target.value)}
+              className="px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 font-mono"
+            />
+          </div>
+          <div className="flex items-center gap-1.5 flex-1 min-w-[200px] max-w-md">
+            <label className="text-slate-600 dark:text-slate-400 font-medium whitespace-nowrap">
+              Remarque :
+            </label>
+            <input
+              type="text"
+              value={remarqueEA}
+              onChange={(e) => setRemarqueEA(e.target.value)}
+              placeholder="Ex : Situation au 30/11/2026 — travaux rue..."
+              className="w-full px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+            />
+          </div>
+        </div>
+
         <div className="flex flex-wrap items-center gap-4">
           <label className="inline-flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-300">
             <input
@@ -309,7 +411,7 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
               checked={showQAvant}
               onChange={(e) => setShowQAvant(e.target.checked)}
             />
-            <span>Afficher Q avant EA</span>
+            <span>Q avant EA</span>
           </label>
           <label className="inline-flex items-center gap-1.5 cursor-pointer text-slate-700 dark:text-slate-300">
             <input
@@ -317,20 +419,19 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
               checked={showQCumul}
               onChange={(e) => setShowQCumul(e.target.checked)}
             />
-            <span>Afficher Q Cumulée</span>
+            <span>Q Cumulée</span>
           </label>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="text-slate-500 dark:text-slate-400">Tri :</span>
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
-            className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
-          >
-            <option value="poste_asc">N° Poste croissant</option>
-            <option value="poste_desc">N° Poste décroissant</option>
-          </select>
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 dark:text-slate-400">Tri :</span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+              className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950"
+            >
+              <option value="poste_asc">N° Poste croissant</option>
+              <option value="poste_desc">N° Poste décroissant</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -402,6 +503,11 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
                           <span className="no-print ml-2 text-[10px] text-slate-400">
                             ({r.lines.length} ligne{r.lines.length > 1 ? 's' : ''})
                           </span>
+                          {isOpen && r.poste.remarques && (
+                            <div className="no-print mt-1.5 px-2.5 py-1 rounded border border-slate-200 dark:border-slate-700/80 bg-slate-50 dark:bg-slate-950/60 text-[11px] text-slate-600 dark:text-slate-300 whitespace-pre-line">
+                              {r.poste.remarques}
+                            </div>
+                          )}
                         </td>
                         <td className="py-2 px-2.5 text-center">{r.poste.u}</td>
                         <td className="py-2 px-2.5 text-right font-mono tabular-nums">

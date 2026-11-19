@@ -74,42 +74,23 @@ export const QualiroutesModal: React.FC<QualiroutesModalProps> = ({
     }
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      const m = await getQualiroutesMeta();
-      if (!active) return;
-      setMeta(m);
-      setLoadingMeta(false);
-      if (m && initialRef.trim()) {
-        await runSearch(initialRef);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [initialRef, runSearch]);
+  const autoInitDoneRef = useRef(false);
+  const queryRef = useRef(query);
+  queryRef.current = query;
 
-  const openPage = async (pageNum: number) => {
-    if (!meta || pageNum < 1 || pageNum > meta.numPages) return;
-    const p = await getQualiroutesPage(pageNum);
-    setActivePageNum(pageNum);
-    setActivePageText(p?.text || '(Texte indisponible pour cette page)');
-  };
-
-  const handleImportBuffer = async (buf: ArrayBuffer, fileName: string) => {
+  const handleImportBuffer = useCallback(async (buf: ArrayBuffer, fileName: string) => {
     setIndexing(true);
     setErrorMsg(null);
     setProgressPct(1);
-    setProgressMsg('Démarrage de l’indexation…');
+    setProgressMsg('Démarrage de l’indexation globale pour toute l’application…');
     try {
       const newMeta = await indexQualiroutesPdfBuffer(buf, fileName, (pct, msg) => {
         setProgressPct(pct);
         setProgressMsg(msg);
       });
       setMeta(newMeta);
-      if (query.trim()) {
-        await runSearch(query);
+      if (queryRef.current.trim()) {
+        await runSearch(queryRef.current);
       }
     } catch (err) {
       setErrorMsg(
@@ -118,18 +99,18 @@ export const QualiroutesModal: React.FC<QualiroutesModalProps> = ({
     } finally {
       setIndexing(false);
     }
-  };
+  }, [runSearch]);
 
   const handleLocalFile = async (file: File) => {
     const buf = await file.arrayBuffer();
     await handleImportBuffer(buf, file.name);
   };
 
-  const handleIndexBundledPdf = async () => {
+  const handleIndexBundledPdf = useCallback(async () => {
     setIndexing(true);
     setErrorMsg(null);
     setProgressPct(1);
-    setProgressMsg('Téléchargement du CCT Qualiroutes intégré…');
+    setProgressMsg('Téléchargement unique du CCT Qualiroutes intégré…');
     try {
       const resp = await fetch(BUNDLED_QUALIROUTES_URL);
       if (!resp.ok) {
@@ -145,6 +126,35 @@ export const QualiroutesModal: React.FC<QualiroutesModalProps> = ({
           : 'Impossible de charger le PDF intégré hors-ligne. Importez votre fichier PDF local.'
       );
     }
+  }, [handleImportBuffer]);
+
+  useEffect(() => {
+    if (autoInitDoneRef.current) return;
+    autoInitDoneRef.current = true;
+    let active = true;
+    (async () => {
+      const m = await getQualiroutesMeta();
+      if (!active) return;
+      setMeta(m);
+      setLoadingMeta(false);
+      if (m) {
+        if (initialRef.trim()) {
+          await runSearch(initialRef);
+        }
+      } else {
+        await handleIndexBundledPdf();
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [initialRef, runSearch, handleIndexBundledPdf]);
+
+  const openPage = async (pageNum: number) => {
+    if (!meta || pageNum < 1 || pageNum > meta.numPages) return;
+    const p = await getQualiroutesPage(pageNum);
+    setActivePageNum(pageNum);
+    setActivePageText(p?.text || '(Texte indisponible pour cette page)');
   };
 
   const handleClearIndex = async () => {
@@ -191,17 +201,20 @@ export const QualiroutesModal: React.FC<QualiroutesModalProps> = ({
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/60 space-y-3 shrink-0">
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
             {loadingMeta ? (
-              <span className="text-slate-500">Vérification de l’index local IndexedDB…</span>
+              <span className="text-slate-500">Vérification de l’index global de l’application…</span>
             ) : meta ? (
-              <div className="flex flex-wrap items-center gap-2 text-emerald-700 dark:text-emerald-400 font-semibold">
-                <span>
-                  Index local prêt : {meta.fileName} ({meta.numPages} pages · {meta.sectionCount}{' '}
-                  articles) — disponible hors-ligne
+              <div className="flex flex-col gap-0.5">
+                <span className="text-emerald-700 dark:text-emerald-400 font-semibold">
+                  Index global prêt : {meta.fileName} ({meta.numPages} pages · {meta.sectionCount}{' '}
+                  articles)
+                </span>
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Enregistré une seule fois pour toute l’application — valable sur tous vos dossiers, même hors-ligne.
                 </span>
               </div>
             ) : (
               <span className="text-amber-700 dark:text-amber-400 font-medium">
-                Aucun PDF Qualiroutes indexé localement sur cet appareil.
+                Aucun PDF Qualiroutes indexé sur cet appareil (valable une fois pour tous les dossiers).
               </span>
             )}
 
@@ -212,21 +225,23 @@ export const QualiroutesModal: React.FC<QualiroutesModalProps> = ({
                 onClick={() => fileInputRef.current?.click()}
                 className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-semibold cursor-pointer disabled:opacity-50"
               >
-                <FileUp className="w-3.5 h-3.5" /> Importer PDF local
+                <FileUp className="w-3.5 h-3.5" /> {meta ? 'Remplacer le PDF' : 'Déposer PDF local'}
               </button>
-              <button
-                type="button"
-                disabled={indexing}
-                onClick={() => void handleIndexBundledPdf()}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1e3a5f] hover:bg-[#162d4b] text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
-              >
-                Indexer Qualiroutes 2026
-              </button>
+              {!meta && (
+                <button
+                  type="button"
+                  disabled={indexing}
+                  onClick={() => void handleIndexBundledPdf()}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-[#1e3a5f] hover:bg-[#162d4b] text-white text-xs font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  Indexer Qualiroutes 2026
+                </button>
+              )}
               {meta && !indexing && (
                 <button
                   type="button"
                   onClick={() => void handleClearIndex()}
-                  title="Vider l'index local Qualiroutes"
+                  title="Vider l'index global Qualiroutes"
                   className="p-1.5 rounded-lg border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />

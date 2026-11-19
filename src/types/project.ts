@@ -11,10 +11,33 @@ export interface InfosAdministratives {
 export interface PosteMarche {
   id: string;
   ref?: string;
+  code?: string;
+  remarques?: string;
   desc: string;
   u: string;
   qte: number;
   pu: number;
+}
+
+export interface MetreRecapPoste {
+  numero: string;
+  code: string;
+  chapitre: string;
+  typePrix: string;
+  libelle: string;
+  unite: string;
+  quantite: number;
+  section?: string;
+  remarques: string;
+}
+
+export interface MetreRecapMeta {
+  fileName: string;
+  importedAt: string;
+  totalPostes: number;
+  postesAvecRemarques: number;
+  postesLies: number;
+  postesEnrichis: number;
 }
 
 export interface Avenant extends PosteMarche {
@@ -110,6 +133,7 @@ export interface DetailPosteEA {
 export interface HistoriqueEA {
   indice: string;
   date: string;
+  remarque?: string;
   montant: number;
   detailParPoste: DetailPosteEA[];
 }
@@ -172,6 +196,9 @@ export interface ProjectData {
   delais: DelaisConfig;
   configVoirie?: ConfigVoirieDemolition;
   configDemolition?: ConfigVoirieDemolition;
+  metreRecapMeta?: MetreRecapMeta;
+  mrPostes?: MetreRecapPoste[];
+  justificationsCumul?: Record<string, string>;
 }
 
 export interface CalcQteResult {

@@ -77,6 +77,7 @@ export const Tab7Delais: React.FC<Tab7DelaisProps> = ({
   const [rangeStart, setRangeStart] = useState<string>('');
   const [rangeEnd, setRangeEnd] = useState<string>('');
   const [rangeType, setRangeType] = useState<BrushMode>('conge');
+  const [rangeMotif, setRangeMotif] = useState<string>('');
   const [skipWeekends, setSkipWeekends] = useState<boolean>(true);
 
   const dragPaintModeRef = useRef<BrushMode | null>(null);
@@ -182,14 +183,14 @@ export const Tab7Delais: React.FC<Tab7DelaisProps> = ({
     );
   };
 
-  const applyLeavePreset = (preset: 'ete' | 'noel') => {
+  const applyLeavePreset = (preset: 'ete' | 'noel' | 'intemp_semaine') => {
     const refYear =
       state.os && !isNaN(state.os.getTime())
         ? Math.max(state.os.getFullYear(), new Date().getFullYear())
         : new Date().getFullYear();
 
     if (preset === 'ete') {
-      // Congés du bâtiment été : 2e lundi de juillet -> 3 semaines ouvrables
+      // Congés du génie civil (GC) — été : 2e lundi de juillet -> 3 semaines ouvrables
       const jul1 = new Date(refYear, 6, 1);
       const offsetToMon = (8 - jul1.getDay()) % 7;
       const firstMon = addDays(jul1, offsetToMon);
@@ -197,12 +198,25 @@ export const Tab7Delais: React.FC<Tab7DelaisProps> = ({
       const thirdFri = addDays(secondMon, 18);
       setRangeStart(dateCle(secondMon));
       setRangeEnd(dateCle(thirdFri));
-    } else {
-      // Fermeture bâtiment fin d'année
+      setRangeType('conge');
+    } else if (preset === 'noel') {
+      // Fermeture génie civil / fin d'année
       setRangeStart(`${refYear}-12-24`);
       setRangeEnd(`${refYear + 1}-01-04`);
+      setRangeType('conge');
+    } else {
+      // Plage intempéries rapide (semaine en cours si vide)
+      if (!rangeStart || !rangeEnd) {
+        const now = new Date();
+        const day = now.getDay();
+        const monOffset = day === 0 ? -6 : 1 - day;
+        const mon = addDays(now, monOffset);
+        const fri = addDays(mon, 4);
+        setRangeStart(dateCle(mon));
+        setRangeEnd(dateCle(fri));
+      }
+      setRangeType('intemperie');
     }
-    setRangeType('conge');
   };
 
   const handleApplyRange = () => {
@@ -217,9 +231,12 @@ export const Tab7Delais: React.FC<Tab7DelaisProps> = ({
       return;
     }
 
+    const motifClean = rangeMotif.trim();
     let count = 0;
     onUpdateData((prev) => {
       const jm = { ...(prev.delais.joursMarques || {}) };
+      const touchedMonthKeys = new Set<string>();
+
       for (let cur = new Date(d1); cur <= d2; cur.setDate(cur.getDate() + 1)) {
         const wd = cur.getDay();
         if (skipWeekends && (wd === 0 || wd === 6)) continue;
@@ -235,8 +252,22 @@ export const Tab7Delais: React.FC<Tab7DelaisProps> = ({
             jm[cle] = rangeType;
             count++;
           }
+          if (motifClean) {
+            touchedMonthKeys.add(getMonthObservationKey(cur.getFullYear(), cur.getMonth()));
+          }
         }
       }
+
+      const nextObs = { ...(prev.delais.observationsOverrides || {}) };
+      if (motifClean && rangeType === 'intemperie' && touchedMonthKeys.size > 0) {
+        touchedMonthKeys.forEach((mk) => {
+          const existing = nextObs[mk] || '';
+          if (!existing.includes(motifClean)) {
+            nextObs[mk] = existing ? `${existing}\n${motifClean}` : motifClean;
+          }
+        });
+      }
+
       const prevFin = prev.delais.finCalendrier || '';
       const nextFin =
         rangeType !== 'effacer' && (!prevFin || rangeEnd > prevFin) ? rangeEnd : prevFin;
@@ -246,6 +277,7 @@ export const Tab7Delais: React.FC<Tab7DelaisProps> = ({
         delais: {
           ...prev.delais,
           joursMarques: jm,
+          observationsOverrides: nextObs,
           finCalendrier: nextFin,
         },
       };
@@ -605,9 +637,9 @@ export const Tab7Delais: React.FC<Tab7DelaisProps> = ({
 
           {/* Pré-encodage congés & jours fériés */}
           <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                Pré-encodage congés &amp; fériés
+                Pré-encodage plage &amp; fériés
               </h3>
               <button
                 type="button"
@@ -624,17 +656,25 @@ export const Tab7Delais: React.FC<Tab7DelaisProps> = ({
                 type="button"
                 onClick={() => applyLeavePreset('ete')}
                 className="px-2 py-1 rounded border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-[10px] font-semibold hover:bg-amber-100 cursor-pointer"
-                title="Congés du bâtiment — été (à ajuster selon la région)"
+                title="Congés du génie civil (GC) — été (à ajuster selon la région)"
               >
-                Été bâtiment (3 sem.)
+                Été GC (3 sem.)
               </button>
               <button
                 type="button"
                 onClick={() => applyLeavePreset('noel')}
                 className="px-2 py-1 rounded border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-[10px] font-semibold hover:bg-amber-100 cursor-pointer"
-                title="Fermeture bâtiment fin d'année"
+                title="Fermeture génie civil / fin d'année"
               >
                 Hiver / Fin d'année
+              </button>
+              <button
+                type="button"
+                onClick={() => applyLeavePreset('intemp_semaine')}
+                className="px-2 py-1 rounded border border-sky-300 dark:border-sky-800 bg-sky-50/70 dark:bg-sky-950/30 text-sky-800 dark:text-sky-300 text-[10px] font-semibold hover:bg-sky-100 cursor-pointer"
+                title="Prépare une plage d'intempéries sur plusieurs jours"
+              >
+                Plage intempéries
               </button>
             </div>
 
@@ -659,6 +699,21 @@ export const Tab7Delais: React.FC<Tab7DelaisProps> = ({
               </div>
             </div>
 
+            {rangeType === 'intemperie' && (
+              <div>
+                <label className="block text-[10px] text-slate-500 mb-0.5">
+                  Motif / observation du mois (optionnel)
+                </label>
+                <input
+                  type="text"
+                  value={rangeMotif}
+                  onChange={(e) => setRangeMotif(e.target.value)}
+                  placeholder="Ex : Pluie continue / Gel sol..."
+                  className="w-full px-2 py-1 rounded border border-sky-300 dark:border-sky-800 bg-sky-50/40 dark:bg-slate-950 text-[11px]"
+                />
+              </div>
+            )}
+
             <div className="flex items-center gap-2">
               <select
                 value={rangeType}
@@ -673,7 +728,11 @@ export const Tab7Delais: React.FC<Tab7DelaisProps> = ({
               <button
                 type="button"
                 onClick={handleApplyRange}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-amber-700 hover:bg-amber-600 text-white font-semibold cursor-pointer whitespace-nowrap"
+                className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-white font-semibold cursor-pointer whitespace-nowrap ${
+                  rangeType === 'intemperie'
+                    ? 'bg-sky-700 hover:bg-sky-600'
+                    : 'bg-amber-700 hover:bg-amber-600'
+                }`}
               >
                 <CalendarDays className="w-3.5 h-3.5" /> Appliquer
               </button>

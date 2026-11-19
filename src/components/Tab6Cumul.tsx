@@ -7,15 +7,22 @@ import { PrintHeader } from './PrintHeader';
 
 interface Tab6CumulProps {
   appData: ProjectData;
+  onUpdateData?: (updater: (prev: ProjectData) => ProjectData) => void;
   onNotify?: (type: 'success' | 'warning' | 'error' | 'info', text: string) => void;
   onOpenQualiroutes?: (ref?: string, desc?: string) => void;
 }
 
 type FilterMode = 'tous' | 'depassement' | 'dep10' | 'dep10_1000' | 'dep10_ou_1000' | 'masquer0';
 
-export const Tab6Cumul: React.FC<Tab6CumulProps> = ({ appData, onNotify, onOpenQualiroutes }) => {
+export const Tab6Cumul: React.FC<Tab6CumulProps> = ({
+  appData,
+  onUpdateData,
+  onNotify,
+  onOpenQualiroutes,
+}) => {
   const [search, setSearch] = useState('');
   const [filterMode, setFilterMode] = useState<FilterMode>('tous');
+  const [justifDrafts, setJustifDrafts] = useState<Record<string, string>>({});
 
   const [cols, setCols] = useState({
     qteM: true,
@@ -28,6 +35,7 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({ appData, onNotify, onOpenQ
     solde: true,
     pct: true,
     ecart: true,
+    justification: true,
   });
 
   const allPostes = useMemo(() => srcP(appData), [appData]);
@@ -63,7 +71,12 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({ appData, onNotify, onOpenQ
   const filteredRows = useMemo(() => {
     const q = NRM(search);
     return rows.filter((r) => {
-      const matchSearch = !q || NRM(r.p.id).includes(q) || NRM(r.p.desc).includes(q);
+      const matchSearch =
+        !q ||
+        NRM(r.p.id).includes(q) ||
+        NRM(r.p.code || '').includes(q) ||
+        NRM(r.p.desc).includes(q) ||
+        NRM(r.p.remarques || '').includes(q);
       if (!matchSearch) return false;
       if (filterMode === 'depassement') return r.pct > 100;
       if (filterMode === 'dep10') return r.pct > 110;
@@ -91,6 +104,26 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({ appData, onNotify, onOpenQ
   const toggleCol = (key: keyof typeof cols) =>
     setCols((prev) => ({ ...prev, [key]: !prev[key] }));
 
+  const commitJustification = (posteId: string, rawVal: string) => {
+    const clean = rawVal.trim();
+    setJustifDrafts((prev) => {
+      const n = { ...prev };
+      delete n[posteId];
+      return n;
+    });
+    const current = appData.justificationsCumul?.[posteId] || '';
+    if (clean === current || !onUpdateData) return;
+    onUpdateData((prev) => {
+      const next = { ...(prev.justificationsCumul || {}) };
+      if (clean) next[posteId] = clean;
+      else delete next[posteId];
+      return {
+        ...prev,
+        justificationsCumul: next,
+      };
+    });
+  };
+
   return (
     <div className="space-y-4">
       <PrintHeader infos={appData.infosAdministratives} />
@@ -117,7 +150,7 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({ appData, onNotify, onOpenQ
               type="button"
               disabled={filteredRows.length === 0}
               onClick={() => {
-                exportCumulExcel(appData, filteredRows);
+                exportCumulExcel(appData, filteredRows, cols.justification);
                 onNotify?.('success', `Export Excel Cumul généré (${filteredRows.length} postes).`);
               }}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 disabled:opacity-40 text-emerald-800 dark:text-emerald-300 cursor-pointer whitespace-nowrap"
@@ -166,6 +199,7 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({ appData, onNotify, onOpenQ
               ['solde', 'Solde Qté'],
               ['pct', '% Exécuté'],
               ['ecart', 'Écart (€)'],
+              ['justification', 'Justification'],
             ] as const
           ).map(([k, lbl]) => (
             <label key={k} className="inline-flex items-center gap-1 cursor-pointer">
@@ -204,6 +238,9 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({ appData, onNotify, onOpenQ
                   {cols.solde && <th className="py-2 px-2.5 text-right">Solde Qté</th>}
                   {cols.pct && <th className="py-2 px-2.5 text-center w-20">%</th>}
                   {cols.ecart && <th className="py-2 px-2.5 text-right">Écart (€)</th>}
+                  {cols.justification && (
+                    <th className="py-2 px-2.5 text-left min-w-[180px]">Justification</th>
+                  )}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -221,15 +258,22 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({ appData, onNotify, onOpenQ
                         {r.p.id}
                       </td>
                       <td className="py-1.5 px-2.5 text-slate-800 dark:text-slate-100">
-                        {r.p.desc}
-                        {r.p.ref && onOpenQualiroutes && (
-                          <button
-                            type="button"
-                            onClick={() => onOpenQualiroutes(r.p.ref, r.p.desc)}
-                            className="no-print ml-2 inline-flex items-center px-1.5 py-0.5 rounded border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 font-mono text-[10px] font-semibold cursor-pointer"
-                          >
-                            Réf. {r.p.ref}
-                          </button>
+                        <div>
+                          {r.p.desc}
+                          {r.p.ref && onOpenQualiroutes && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenQualiroutes(r.p.ref, r.p.desc)}
+                              className="no-print ml-2 inline-flex items-center px-1.5 py-0.5 rounded border border-sky-200 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 font-mono text-[10px] font-semibold cursor-pointer"
+                            >
+                              Réf. {r.p.ref}
+                            </button>
+                          )}
+                        </div>
+                        {r.p.remarques && (
+                          <div className="no-print mt-1 px-2 py-1 rounded border border-slate-200 dark:border-slate-700/80 bg-slate-50 dark:bg-slate-950/60 text-[11px] text-slate-600 dark:text-slate-300 whitespace-pre-line">
+                            {r.p.remarques}
+                          </div>
                         )}
                       </td>
                       <td className="py-1.5 px-2.5 text-center">{r.p.u}</td>
@@ -315,6 +359,48 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({ appData, onNotify, onOpenQ
                           {fmt(r.ecart)} €
                         </td>
                       )}
+                      {cols.justification && (
+                        <td className="py-1.5 px-2.5 align-top">
+                          {(() => {
+                            const savedVal = appData.justificationsCumul?.[r.p.id] || '';
+                            const draftVal = justifDrafts[r.p.id] ?? savedVal;
+                            const needsJustif = r.pct > 100 && !draftVal.trim();
+                            return (
+                              <>
+                                <input
+                                  type="text"
+                                  value={draftVal}
+                                  onChange={(e) =>
+                                    setJustifDrafts((prev) => ({
+                                      ...prev,
+                                      [r.p.id]: e.target.value,
+                                    }))
+                                  }
+                                  onBlur={(e) => commitJustification(r.p.id, e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      commitJustification(
+                                        r.p.id,
+                                        (e.target as HTMLInputElement).value
+                                      );
+                                    }
+                                  }}
+                                  placeholder={needsJustif ? 'Justifier dépassement...' : 'Note...'}
+                                  className={`no-print w-full min-w-[160px] px-2 py-1 text-[11px] rounded border bg-white/80 dark:bg-slate-950/70 outline-none focus:border-sky-500 ${
+                                    needsJustif
+                                      ? 'border-amber-300 dark:border-amber-800 placeholder:text-amber-600/70'
+                                      : 'border-slate-200 dark:border-slate-700'
+                                  }`}
+                                />
+                                <span className="hidden print:block text-[11px] whitespace-pre-wrap">
+                                  {savedVal || '—'}
+                                </span>
+                              </>
+                            );
+                          })()}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -366,6 +452,7 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({ appData, onNotify, onOpenQ
                       {fmt(totals.tEcart)} €
                     </td>
                   )}
+                  {cols.justification && <td />}
                 </tr>
               </tfoot>
             </table>

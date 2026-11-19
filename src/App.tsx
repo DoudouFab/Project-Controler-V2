@@ -5,6 +5,7 @@ import {
   Database,
   FileCheck2,
   FilePlus2,
+  FolderKanban,
   FolderOpen,
   Layers,
   LogOut,
@@ -22,6 +23,7 @@ import {
 import { AuthGate, AuthSession } from './components/AuthGate';
 import { ConfirmDialog, ConfirmDialogState, ToastContainer, ToastMessage } from './components/AppDialogs';
 import { PWAInstallButton } from './components/PWAInstallButton';
+import { DossiersModal } from './components/modals/DossiersModal';
 import { MultiPrintModal, PrintTabSelection } from './components/modals/MultiPrintModal';
 import { Tab1Global } from './components/Tab1Global';
 import { Tab2Encodage } from './components/Tab2Encodage';
@@ -31,6 +33,7 @@ import { Tab5EaValides } from './components/Tab5EaValides';
 import { Tab6Cumul } from './components/Tab6Cumul';
 import { Tab7Delais } from './components/Tab7Delais';
 import { Tab8Acces } from './components/Tab8Acces';
+import { isAdminUser } from './firebase';
 import { ProjectData, TronconEgout } from './types/project';
 import {
   calculerEtatDelai,
@@ -42,6 +45,22 @@ import {
 } from './utils/calculations';
 import { INASEP_LOGO_BASE64 } from './constants/inasep';
 import { buildInasepDelaySheetHtml, printHtmlViaIframe } from './utils/inasepPrint';
+import {
+  ChantierRecord,
+  deleteDossier,
+  generateDossierId,
+  getDossier,
+  initDossiersWorkspace,
+  listDossiers,
+  LocalFileHandleLike,
+  markDossierExported,
+  pickJsonBackupHandle,
+  savePrefs,
+  saveSnapshot,
+  SnapshotRecord,
+  upsertDossier,
+  writeProjectToFileHandle,
+} from './utils/projectsDb';
 
 const QualiroutesModal = React.lazy(() =>
   import('./components/modals/QualiroutesModal').then((m) => ({ default: m.QualiroutesModal }))
@@ -101,6 +120,8 @@ function normalizeProjectData(raw: unknown): ProjectData {
       ? r.marche3P.map((p) => ({
           id: String(p.id ?? ''),
           ...(p.ref ? { ref: String(p.ref) } : {}),
+          ...(p.code ? { code: String(p.code) } : {}),
+          ...(p.remarques ? { remarques: String(p.remarques) } : {}),
           desc: String(p.desc ?? ''),
           u: String(p.u ?? ''),
           qte: Number(p.qte) || 0,
@@ -134,6 +155,11 @@ function normalizeProjectData(raw: unknown): ProjectData {
     },
     configVoirie: r.configVoirie?.parTroncon ? r.configVoirie : { parTroncon: {} },
     configDemolition: r.configDemolition?.parTroncon ? r.configDemolition : { parTroncon: {} },
+    ...(r.metreRecapMeta ? { metreRecapMeta: r.metreRecapMeta } : {}),
+    ...(Array.isArray(r.mrPostes) ? { mrPostes: r.mrPostes } : {}),
+    ...(r.justificationsCumul && typeof r.justificationsCumul === 'object'
+      ? { justificationsCumul: r.justificationsCumul }
+      : {}),
   };
 }
 
@@ -193,11 +219,28 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
   const [showMultiPrintModal, setShowMultiPrintModal] = useState<boolean>(false);
   const [multiPrintBatch, setMultiPrintBatch] = useState<PrintTabSelection[] | null>(null);
   const [qualiroutesCtx, setQualiroutesCtx] = useState<{ ref: string; desc: string } | null>(null);
+  const [showAccesModal, setShowAccesModal] = useState<boolean>(false);
+  const [showDossiersModal, setShowDossiersModal] = useState<boolean>(false);
+
+  const [dossiers, setDossiers] = useState<ChantierRecord[]>([]);
+  const [activeDossierId, setActiveDossierId] = useState<string | null>(null);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState<boolean>(true);
+  const [lastAutoSaveAt, setLastAutoSaveAt] = useState<string | null>(null);
+  const [isDirtySinceJson, setIsDirtySinceJson] = useState<boolean>(false);
+  const [linkedFileName, setLinkedFileName] = useState<string | null>(null);
+
+  const canManageAccess = session.isAdmin && isAdminUser(session.user);
 
   const jsonInputRef = useRef<HTMLInputElement>(null);
   const undoStackRef = useRef<ProjectData[]>([]);
   const redoStackRef = useRef<ProjectData[]>([]);
   const [historyCounts, setHistoryCounts] = useState({ undo: 0, redo: 0 });
+  const appDataRef = useRef<ProjectData>(appData);
+  const dbReadyRef = useRef<boolean>(false);
+  const skipNextDbPersistRef = useRef<boolean>(false);
+  const linkedFileHandleRef = useRef<LocalFileHandleLike | null>(null);
+
+  appDataRef.current = appData;
 
   useEffect(() => {
     const onUp = () => setIsOnline(true);
@@ -251,6 +294,81 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
     }
   }, [appData]);
 
+  // Initialisation du workspace multi-dossiers IndexedDB
+  useEffect(() => {
+    let alive = true;
+    initDossiersWorkspace(appDataRef.current, normalizeProjectData).then((res) => {
+      if (!alive) return;
+      skipNextDbPersistRef.current = true;
+      dbReadyRef.current = true;
+      setActiveDossierId(res.activeId);
+      setDossiers(res.dossiers);
+      setAutoSaveEnabled(res.prefs.autoSaveEnabled);
+      setLastAutoSaveAt(res.prefs.lastAutoSaveAt || null);
+      setAppData(res.activeData);
+
+      const rec = res.dossiers.find((d) => d.id === res.activeId);
+      const dirty = rec
+        ? !rec.lastJsonExportAt || rec.updatedAt > rec.lastJsonExportAt
+        : false;
+      setIsDirtySinceJson(dirty);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Persistance debounced dans le dossier IndexedDB actif
+  useEffect(() => {
+    if (!dbReadyRef.current || !activeDossierId) return;
+    if (skipNextDbPersistRef.current) {
+      skipNextDbPersistRef.current = false;
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void upsertDossier(activeDossierId, appData).then(async () => {
+        const list = await listDossiers();
+        setDossiers(list);
+      });
+    }, 450);
+    return () => window.clearTimeout(t);
+  }, [appData, activeDossierId]);
+
+  // Sauvegarde automatique périodique toutes les 7 minutes
+  useEffect(() => {
+    if (!autoSaveEnabled || !activeDossierId) return;
+    const INTERVAL_MS = 7 * 60 * 1000;
+    const timer = window.setInterval(async () => {
+      const current = appDataRef.current;
+      await upsertDossier(activeDossierId, current);
+      const snap = await saveSnapshot(activeDossierId, current, 'auto');
+      setLastAutoSaveAt(snap.savedAt);
+      await savePrefs({
+        id: 'prefs',
+        activeDossierId,
+        autoSaveEnabled: true,
+        autoSaveIntervalMin: 7,
+        lastAutoSaveAt: snap.savedAt,
+      });
+
+      if (linkedFileHandleRef.current) {
+        try {
+          const ok = await writeProjectToFileHandle(linkedFileHandleRef.current, current);
+          if (ok) {
+            await markDossierExported(activeDossierId);
+            setIsDirtySinceJson(false);
+          }
+        } catch {
+          // L'utilisateur a peut-être déplacé ou révoqué le fichier lié
+        }
+      }
+      const list = await listDossiers();
+      setDossiers(list);
+    }, INTERVAL_MS);
+
+    return () => window.clearInterval(timer);
+  }, [autoSaveEnabled, activeDossierId]);
+
   useEffect(() => {
     document.documentElement.classList.toggle('dark', isDark);
     try {
@@ -275,7 +393,10 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
         if (next === prev) return prev;
         undoStackRef.current = [...undoStackRef.current.slice(-29), prev];
         redoStackRef.current = [];
-        window.setTimeout(syncHistoryCounts, 0);
+        window.setTimeout(() => {
+          syncHistoryCounts();
+          setIsDirtySinceJson(true);
+        }, 0);
         return next;
       });
     },
@@ -335,7 +456,7 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [handleUndo, handleRedo]);
 
-  const handleSaveJson = () => {
+  const handleSaveJson = async () => {
     const json = JSON.stringify(appData, null, 2);
     const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -347,6 +468,12 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    if (activeDossierId) {
+      await upsertDossier(activeDossierId, appData);
+      await markDossierExported(activeDossierId);
+      setDossiers(await listDossiers());
+    }
+    setIsDirtySinceJson(false);
     notify('success', `Sauvegarde exportée : ${safeName}_sauvegarde.json`);
   };
 
@@ -359,8 +486,15 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
         return;
       }
       const norm = normalizeProjectData(parsed);
+      skipNextDbPersistRef.current = true;
       setAppData(norm);
       clearHistory();
+      if (activeDossierId) {
+        const now = new Date().toISOString();
+        await upsertDossier(activeDossierId, norm, { lastJsonExportAt: now });
+        setDossiers(await listDossiers());
+      }
+      setIsDirtySinceJson(false);
       notify(
         'success',
         `Projet chargé : ${norm.nomProjet} (${norm.marche3P.length} postes, ${norm.tronconsEgout.length} tronçons, ${norm.historiqueEA.length} EA).`
@@ -377,18 +511,229 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
 
   const handleResetVierge = () => {
     openConfirm({
-      title: 'Créer un chantier vierge',
+      title: 'Réinitialiser ce dossier sur un chantier vierge',
       message:
-        'Toutes les données actuelles non sauvegardées (bordereau, tronçons, carnet, EA et délais) seront remplacées par un dossier vierge.',
+        'Le dossier actif sera remis à zéro (bordereau, tronçons, carnet, EA et délais). Pour conserver ce chantier et en ouvrir un autre à part, utilisez plutôt « Mes chantiers » → « Nouveau dossier vierge ».',
       confirmLabel: 'Réinitialiser',
       danger: true,
       onConfirm: () => {
         setAppData(genererStructureVierge());
         clearHistory();
+        setIsDirtySinceJson(false);
         setActiveTab(1);
-        notify('info', 'Nouveau chantier vierge initialisé.');
+        notify('info', 'Dossier réinitialisé sur une structure vierge.');
       },
     });
+  };
+
+  const handleSwitchDossier = async (targetId: string) => {
+    if (targetId === activeDossierId) {
+      setShowDossiersModal(false);
+      return;
+    }
+    if (activeDossierId) {
+      await upsertDossier(activeDossierId, appDataRef.current);
+    }
+    const target = await getDossier(targetId);
+    if (!target) return;
+    const norm = normalizeProjectData(target.data);
+    skipNextDbPersistRef.current = true;
+    setActiveDossierId(target.id);
+    setAppData(norm);
+    clearHistory();
+    linkedFileHandleRef.current = null;
+    setLinkedFileName(null);
+    setIsDirtySinceJson(
+      !target.lastJsonExportAt || target.updatedAt > target.lastJsonExportAt
+    );
+    await savePrefs({
+      id: 'prefs',
+      activeDossierId: target.id,
+      autoSaveEnabled,
+      autoSaveIntervalMin: 7,
+      lastAutoSaveAt: lastAutoSaveAt || undefined,
+    });
+    setDossiers(await listDossiers());
+    setShowDossiersModal(false);
+    setActiveTab(1);
+    notify('info', `Dossier ouvert : ${norm.nomProjet}`);
+  };
+
+  const handleCreateNewDossier = async () => {
+    if (activeDossierId) {
+      await upsertDossier(activeDossierId, appDataRef.current);
+    }
+    const newId = generateDossierId();
+    const blank = genererStructureVierge();
+    await upsertDossier(newId, blank);
+    skipNextDbPersistRef.current = true;
+    setActiveDossierId(newId);
+    setAppData(blank);
+    clearHistory();
+    linkedFileHandleRef.current = null;
+    setLinkedFileName(null);
+    setIsDirtySinceJson(false);
+    await savePrefs({
+      id: 'prefs',
+      activeDossierId: newId,
+      autoSaveEnabled,
+      autoSaveIntervalMin: 7,
+      lastAutoSaveAt: lastAutoSaveAt || undefined,
+    });
+    setDossiers(await listDossiers());
+    setShowDossiersModal(false);
+    setActiveTab(1);
+    notify('success', 'Nouveau dossier local vierge créé.');
+  };
+
+  const handleDuplicateDossier = async (sourceId: string) => {
+    if (sourceId === activeDossierId) {
+      await upsertDossier(sourceId, appDataRef.current);
+    }
+    const src = await getDossier(sourceId);
+    if (!src) return;
+    const cloned = normalizeProjectData(JSON.parse(JSON.stringify(src.data)));
+    cloned.nomProjet = `${cloned.nomProjet || 'Chantier'}_copie`;
+    const newId = generateDossierId();
+    await upsertDossier(newId, cloned);
+    skipNextDbPersistRef.current = true;
+    setActiveDossierId(newId);
+    setAppData(cloned);
+    clearHistory();
+    linkedFileHandleRef.current = null;
+    setLinkedFileName(null);
+    setIsDirtySinceJson(true);
+    await savePrefs({
+      id: 'prefs',
+      activeDossierId: newId,
+      autoSaveEnabled,
+      autoSaveIntervalMin: 7,
+      lastAutoSaveAt: lastAutoSaveAt || undefined,
+    });
+    setDossiers(await listDossiers());
+    notify('success', `Dossier dupliqué : ${cloned.nomProjet}`);
+  };
+
+  const handleDeleteDossier = (targetId: string) => {
+    if (dossiers.length <= 1) return;
+    const target = dossiers.find((d) => d.id === targetId);
+    openConfirm({
+      title: `Supprimer le dossier local « ${target?.nomProjet || targetId} » ?`,
+      message: 'Cette suppression concerne uniquement la copie locale sur cet appareil.',
+      confirmLabel: 'Supprimer',
+      danger: true,
+      onConfirm: async () => {
+        await deleteDossier(targetId);
+        const remaining = await listDossiers();
+        setDossiers(remaining);
+        if (targetId === activeDossierId && remaining.length > 0) {
+          await handleSwitchDossier(remaining[0].id);
+        }
+        notify('info', 'Dossier local supprimé.');
+      },
+    });
+  };
+
+  const handleToggleAutoSave = async (enabled: boolean) => {
+    setAutoSaveEnabled(enabled);
+    if (activeDossierId) {
+      await savePrefs({
+        id: 'prefs',
+        activeDossierId,
+        autoSaveEnabled: enabled,
+        autoSaveIntervalMin: 7,
+        lastAutoSaveAt: lastAutoSaveAt || undefined,
+      });
+    }
+    notify(
+      'info',
+      enabled
+        ? 'Sauvegarde automatique activée (toutes les 7 minutes).'
+        : 'Sauvegarde automatique périodique mise en pause.'
+    );
+  };
+
+  const handleSaveSnapshotNow = async () => {
+    if (!activeDossierId) return;
+    await upsertDossier(activeDossierId, appDataRef.current);
+    const snap = await saveSnapshot(activeDossierId, appDataRef.current, 'manual');
+    setLastAutoSaveAt(snap.savedAt);
+    await savePrefs({
+      id: 'prefs',
+      activeDossierId,
+      autoSaveEnabled,
+      autoSaveIntervalMin: 7,
+      lastAutoSaveAt: snap.savedAt,
+    });
+    if (linkedFileHandleRef.current) {
+      try {
+        const ok = await writeProjectToFileHandle(linkedFileHandleRef.current, appDataRef.current);
+        if (ok) {
+          await markDossierExported(activeDossierId);
+          setIsDirtySinceJson(false);
+        }
+      } catch {
+        // Ignore
+      }
+    }
+    setDossiers(await listDossiers());
+    notify('success', 'Instantané du dossier enregistré.');
+  };
+
+  const handleRestoreSnapshot = (snap: SnapshotRecord) => {
+    openConfirm({
+      title: 'Restaurer cet instantané ?',
+      message: `Le dossier actif sera restauré tel qu'il était enregistré à ${new Date(snap.savedAt).toLocaleString('fr-FR')}.`,
+      confirmLabel: 'Restaurer',
+      danger: true,
+      onConfirm: async () => {
+        const norm = normalizeProjectData(snap.data);
+        skipNextDbPersistRef.current = true;
+        setAppData(norm);
+        clearHistory();
+        if (activeDossierId) {
+          await upsertDossier(activeDossierId, norm);
+          setDossiers(await listDossiers());
+        }
+        setShowDossiersModal(false);
+        notify('success', 'Instantané restauré.');
+      },
+    });
+  };
+
+  const handleLinkLocalFile = async () => {
+    try {
+      const handle = await pickJsonBackupHandle(appData.nomProjet);
+      if (!handle) return;
+      const ok = await writeProjectToFileHandle(handle, appDataRef.current);
+      if (!ok) {
+        notify('warning', 'Permission d’écriture refusée sur le fichier.');
+        return;
+      }
+      linkedFileHandleRef.current = handle;
+      setLinkedFileName(handle.name);
+      if (activeDossierId) {
+        await markDossierExported(activeDossierId);
+        setDossiers(await listDossiers());
+      }
+      setIsDirtySinceJson(false);
+      notify(
+        'success',
+        `Fichier « ${handle.name} » lié : il sera mis à jour automatiquement toutes les 7 min.`
+      );
+    } catch (err) {
+      if ((err as { name?: string })?.name === 'AbortError') return;
+      notify(
+        'warning',
+        'Impossible de lier un fichier disque dans cet environnement (les instantanés automatiques locaux restent actifs).'
+      );
+    }
+  };
+
+  const handleUnlinkLocalFile = () => {
+    linkedFileHandleRef.current = null;
+    setLinkedFileName(null);
+    notify('info', 'Fichier disque délié.');
   };
 
   const handlePrintActiveTab = (orient: 'portrait' | 'landscape') => {
@@ -462,12 +807,7 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
     return { budget, cumulValide, pctValide, etat, nextEa };
   }, [appData]);
 
-  const navTabs = useMemo(() => {
-    if (session.isAdmin) {
-      return [...BASE_TABS, { id: 8, label: 'Accès', icon: Shield } as const];
-    }
-    return [...BASE_TABS];
-  }, [session.isAdmin]);
+  const navTabs = BASE_TABS;
 
   const renderTabContent = (tabId: number) => {
     switch (tabId) {
@@ -527,6 +867,7 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
         return (
           <Tab6Cumul
             appData={appData}
+            onUpdateData={handleUpdateData}
             onNotify={notify}
             onOpenQualiroutes={openQualiroutes}
           />
@@ -541,14 +882,6 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
             onToggleSansCalendrier={setSansCalendrier}
           />
         );
-      case 8:
-        return session.isAdmin ? (
-          <Tab8Acces
-            currentUser={session.user}
-            onNotify={notify}
-            onConfirm={openConfirm}
-          />
-        ) : null;
       default:
         return null;
     }
@@ -630,12 +963,32 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
             <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
-                onClick={handleSaveJson}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-700 hover:bg-emerald-600 text-white cursor-pointer whitespace-nowrap shrink-0"
-                title="Exporter le dossier complet au format JSON"
+                onClick={() => setShowDossiersModal(true)}
+                className="relative inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 dark:hover:bg-sky-900/50 text-sky-800 dark:text-sky-300 cursor-pointer whitespace-nowrap shrink-0"
+                title={`Gérer mes chantiers locaux (${dossiers.length}) & sauvegarde auto 7 min`}
+              >
+                <FolderKanban className="w-3.5 h-3.5" />
+                Mes chantiers ({dossiers.length || 1})
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void handleSaveJson()}
+                className="relative inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-emerald-700 hover:bg-emerald-600 text-white cursor-pointer whitespace-nowrap shrink-0"
+                title={
+                  isDirtySinceJson
+                    ? 'Des modifications n’ont pas encore été exportées en .json'
+                    : 'Exporter le dossier complet au format JSON'
+                }
               >
                 <Save className="w-3.5 h-3.5" />
                 Sauvegarder
+                {isDirtySinceJson && (
+                  <span
+                    className="w-2 h-2 rounded-full bg-amber-300"
+                    title="Modifications non exportées en .json"
+                  />
+                )}
               </button>
 
               <button
@@ -670,6 +1023,18 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
               </button>
 
               <PWAInstallButton />
+
+              {canManageAccess && (
+                <button
+                  type="button"
+                  onClick={() => setShowAccesModal(true)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-800 dark:text-emerald-300 cursor-pointer whitespace-nowrap shrink-0"
+                  title="Gestion des accès collègues (Administrateur uniquement)"
+                >
+                  <Shield className="w-3.5 h-3.5" />
+                  Accès
+                </button>
+              )}
 
               <div className="h-5 w-px bg-slate-200 dark:bg-slate-700 mx-0.5 hidden sm:block" />
 
@@ -825,6 +1190,66 @@ const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }) => {
             onClose={() => setQualiroutesCtx(null)}
           />
         </React.Suspense>
+      )}
+
+      {canManageAccess && showAccesModal && (
+        <div
+          className="no-print fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-[1px] flex items-center justify-center p-3 sm:p-5"
+          onClick={() => setShowAccesModal(false)}
+        >
+          <div
+            className="w-full max-w-5xl max-h-[90vh] bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 py-3.5 bg-[#1e3a5f] text-white flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <Shield className="w-5 h-5 text-emerald-300" />
+                <div>
+                  <div className="text-sm font-bold">Gestion des accès — Administrateur</div>
+                  <div className="text-[11px] text-sky-100/80">
+                    Accès réservé exclusivement à {session.user.email}
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAccesModal(false)}
+                className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-xs font-semibold cursor-pointer"
+              >
+                Fermer
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5">
+              <Tab8Acces
+                currentUser={session.user}
+                onNotify={notify}
+                onConfirm={openConfirm}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDossiersModal && (
+        <DossiersModal
+          dossiers={dossiers}
+          activeDossierId={activeDossierId}
+          autoSaveEnabled={autoSaveEnabled}
+          lastAutoSaveAt={lastAutoSaveAt}
+          isDirtySinceJson={isDirtySinceJson}
+          linkedFileName={linkedFileName}
+          onClose={() => setShowDossiersModal(false)}
+          onSwitchDossier={(id) => void handleSwitchDossier(id)}
+          onCreateNewDossier={() => void handleCreateNewDossier()}
+          onDuplicateDossier={(id) => void handleDuplicateDossier(id)}
+          onDeleteDossier={handleDeleteDossier}
+          onToggleAutoSave={(en) => void handleToggleAutoSave(en)}
+          onSaveSnapshotNow={() => void handleSaveSnapshotNow()}
+          onRestoreSnapshot={handleRestoreSnapshot}
+          onExportJson={() => void handleSaveJson()}
+          onLinkLocalFile={() => void handleLinkLocalFile()}
+          onUnlinkLocalFile={handleUnlinkLocalFile}
+        />
       )}
 
       <ConfirmDialog dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />

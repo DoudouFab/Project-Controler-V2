@@ -28,6 +28,8 @@ export const Tab5EaValides: React.FC<Tab5EaValidesProps> = ({
 }) => {
   const [expandedIdx, setExpandedIdx] = useState<Set<number>>(new Set());
   const [indiceDrafts, setIndiceDrafts] = useState<Record<number, string>>({});
+  const [dateDrafts, setDateDrafts] = useState<Record<number, string>>({});
+  const [remarqueDrafts, setRemarqueDrafts] = useState<Record<number, string>>({});
   const [qteDrafts, setQteDrafts] = useState<Record<string, string>>({});
 
   const allPostes = useMemo(() => srcP(appData), [appData]);
@@ -100,6 +102,45 @@ export const Tab5EaValides: React.FC<Tab5EaValidesProps> = ({
       };
     });
     onNotify('success', `${oldIndice} renommé en ${clean}.`);
+  };
+
+  const commitDate = (i: number, newVal: string) => {
+    const clean = newVal.trim();
+    setDateDrafts((prev) => {
+      const n = { ...prev };
+      delete n[i];
+      return n;
+    });
+    const ea = appData.historiqueEA?.[i];
+    if (!ea || !clean || clean === ea.date) return;
+    onUpdateData((prev) => ({
+      ...prev,
+      historiqueEA: prev.historiqueEA.map((item, idx) =>
+        idx === i ? { ...item, date: clean } : item
+      ),
+    }));
+  };
+
+  const commitRemarque = (i: number, newVal: string) => {
+    const clean = newVal.trim();
+    setRemarqueDrafts((prev) => {
+      const n = { ...prev };
+      delete n[i];
+      return n;
+    });
+    const ea = appData.historiqueEA?.[i];
+    if (!ea || clean === (ea.remarque || '')) return;
+    onUpdateData((prev) => ({
+      ...prev,
+      historiqueEA: prev.historiqueEA.map((item, idx) =>
+        idx === i
+          ? {
+              ...item,
+              ...(clean ? { remarque: clean } : { remarque: undefined }),
+            }
+          : item
+      ),
+    }));
   };
 
   const commitDetailQte = (eaIndex: number, posteId: string, rawVal: string) => {
@@ -313,6 +354,7 @@ export const Tab5EaValides: React.FC<Tab5EaValidesProps> = ({
                 <tr className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
                   <th className="py-2.5 px-3 text-left w-32">N° EA</th>
                   <th className="py-2.5 px-3 text-left w-28">Date</th>
+                  <th className="py-2.5 px-3 text-left">Remarque / Période</th>
                   <th className="py-2.5 px-3 text-right">Montant EA (€)</th>
                   <th className="py-2.5 px-3 text-right">Cumulé (€)</th>
                   <th className="py-2.5 px-3 text-center w-24">% Marché</th>
@@ -369,8 +411,47 @@ export const Tab5EaValides: React.FC<Tab5EaValidesProps> = ({
                             />
                           </div>
                         </td>
-                        <td className="py-2.5 px-3 text-slate-500 dark:text-slate-400">
-                          {ea.date}
+                        <td
+                          className="py-2.5 px-3 text-slate-500 dark:text-slate-400"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="text"
+                            value={dateDrafts[i] ?? ea.date}
+                            onChange={(e) =>
+                              setDateDrafts((p) => ({ ...p, [i]: e.target.value }))
+                            }
+                            onBlur={(e) => commitDate(i, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                commitDate(i, (e.target as HTMLInputElement).value);
+                              }
+                            }}
+                            title="Modifier la date d'arrêté (JJ/MM/AAAA)"
+                            className="w-24 px-1 py-0.5 font-mono text-xs bg-transparent border-b border-dashed border-slate-300 dark:border-slate-700 focus:border-sky-500 outline-none text-slate-700 dark:text-slate-300"
+                          />
+                        </td>
+                        <td
+                          className="py-2.5 px-3 text-slate-600 dark:text-slate-300"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="text"
+                            value={remarqueDrafts[i] ?? (ea.remarque || '')}
+                            onChange={(e) =>
+                              setRemarqueDrafts((p) => ({ ...p, [i]: e.target.value }))
+                            }
+                            onBlur={(e) => commitRemarque(i, e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                commitRemarque(i, (e.target as HTMLInputElement).value);
+                              }
+                            }}
+                            placeholder="Ajouter une remarque..."
+                            className="w-full min-w-[140px] px-1.5 py-0.5 text-xs bg-transparent border-b border-dashed border-transparent hover:border-slate-300 dark:hover:border-slate-700 focus:border-sky-500 outline-none"
+                          />
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono tabular-nums font-bold">
                           {fmt(ea.montant)} €
@@ -423,7 +504,7 @@ export const Tab5EaValides: React.FC<Tab5EaValidesProps> = ({
 
                       {isOpen && (
                         <tr className="bg-slate-50/80 dark:bg-slate-950/60">
-                          <td colSpan={7} className="p-3 pl-8">
+                          <td colSpan={8} className="p-3 pl-8">
                             {sortedDetails.length === 0 ? (
                               <div className="text-[11px] italic text-slate-500">
                                 EA Néant — Aucun poste facturé.

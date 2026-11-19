@@ -278,7 +278,18 @@ export async function exportCarnetExcel(
   wb.creator = 'ProjectController - F.Pirquin - INASEP';
   wb.created = new Date();
 
-  const ws = wb.addWorksheet(safeSheetName('Carnet_Mesurage'));
+  appendCarnetWorksheet(wb, appData, lines, 'Carnet_Mesurage', 'CARNET DE MESURAGE');
+  await downloadExcelWorkbook(wb, `${appData.nomProjet || 'Chantier'}_Carnet_Mesurage.xlsx`);
+}
+
+function appendCarnetWorksheet(
+  wb: ExcelJS.Workbook,
+  appData: ProjectData,
+  lines: CarnetLineItem[],
+  sheetName: string,
+  title: string
+): void {
+  const ws = wb.addWorksheet(safeSheetName(sheetName));
   applyStandardPageSetup(ws, 'landscape');
 
   ws.columns = [
@@ -295,7 +306,7 @@ export async function exportCarnetExcel(
     { width: 24 }, // K: Annotation
   ];
 
-  const { nextRow } = addStyledMetaBanner(ws, appData, 'CARNET DE MESURAGE', 11);
+  const { nextRow } = addStyledMetaBanner(ws, appData, title, 11);
   const headerRowIdx = nextRow;
 
   styleTableHeaderRow(ws, headerRowIdx, [
@@ -412,8 +423,6 @@ export async function exportCarnetExcel(
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
     cell.font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FF0F172A' } };
   }
-
-  await downloadExcelWorkbook(wb, `${appData.nomProjet || 'Chantier'}_Carnet_Mesurage.xlsx`);
 }
 
 // ─── 2. EXPORT EA EN COURS ──────────────────────────────────────────────────
@@ -426,16 +435,34 @@ export interface EaExportRow {
   lines: CarnetLineItem[];
 }
 
+export interface EaExportMeta {
+  dateArrete?: string;
+  remarque?: string;
+}
+
 export async function exportEaEnCoursExcel(
   appData: ProjectData,
   eaIndice: string,
   groups: EaExportRow[],
-  totalEA: number
+  totalEA: number,
+  meta?: EaExportMeta
 ): Promise<void> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'ProjectController - F.Pirquin - INASEP';
   wb.created = new Date();
 
+  appendEaEnCoursWorksheets(wb, appData, eaIndice, groups, totalEA, meta);
+  await downloadExcelWorkbook(wb, `${appData.nomProjet || 'Chantier'}_${eaIndice}.xlsx`);
+}
+
+function appendEaEnCoursWorksheets(
+  wb: ExcelJS.Workbook,
+  appData: ProjectData,
+  eaIndice: string,
+  groups: EaExportRow[],
+  totalEA: number,
+  meta?: EaExportMeta
+): void {
   // Feuille 1 : Synthèse EA
   const wsSynth = wb.addWorksheet(safeSheetName(`Synthèse_${eaIndice}`));
   applyStandardPageSetup(wsSynth, 'landscape');
@@ -450,11 +477,13 @@ export async function exportEaEnCoursExcel(
     { width: 15 }, // H: Q. Cumulée
   ];
 
+  const titleSuffix = meta?.dateArrete ? ` (Situation au ${meta.dateArrete})` : '';
   const { nextRow: synthHeaderRow } = addStyledMetaBanner(
     wsSynth,
     appData,
-    `ÉTAT D’AVANCEMENT EN COURS — ${eaIndice}`,
-    8
+    `ÉTAT D’AVANCEMENT EN COURS — ${eaIndice}${titleSuffix}`,
+    8,
+    meta?.remarque ? { label: 'Remarque EA :', value: meta.remarque } : undefined
   );
 
   styleTableHeaderRow(wsSynth, synthHeaderRow, [
@@ -627,8 +656,38 @@ export async function exportEaEnCoursExcel(
     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDBEAFE' } };
     c.font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FF0F172A' } };
   }
+}
 
-  await downloadExcelWorkbook(wb, `${appData.nomProjet || 'Chantier'}_${eaIndice}.xlsx`);
+export async function exportDossierEaCompletExcel(
+  appData: ProjectData,
+  eaIndice: string,
+  groups: EaExportRow[],
+  totalEA: number,
+  checkedLines: CarnetLineItem[],
+  cumulRows: CumulExportRow[],
+  meta?: EaExportMeta
+): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'ProjectController - F.Pirquin - INASEP';
+  wb.created = new Date();
+
+  appendEaEnCoursWorksheets(wb, appData, eaIndice, groups, totalEA, meta);
+  appendCarnetWorksheet(
+    wb,
+    appData,
+    checkedLines,
+    `Carnet_${eaIndice}`,
+    `EXTRAIT CARNET DE MESURAGE — ${eaIndice}`
+  );
+  const hasJustif = Object.values(appData.justificationsCumul || {}).some((v) =>
+    Boolean(String(v || '').trim())
+  );
+  appendCumulWorksheet(wb, appData, cumulRows, hasJustif);
+
+  await downloadExcelWorkbook(
+    wb,
+    `${appData.nomProjet || 'Chantier'}_Dossier_Complet_${eaIndice}.xlsx`
+  );
 }
 
 // ─── 3. EXPORT EA VALIDÉS ───────────────────────────────────────────────────
@@ -650,13 +709,14 @@ export async function exportEaValidesExcel(appData: ProjectData): Promise<void> 
     { width: 18 }, // D: Cumulé (€)
     { width: 14 }, // E: % Budget
     { width: 18 }, // F: Solde marché (€)
+    { width: 32 }, // G: Remarque / Période
   ];
 
   const { nextRow: synthHeaderRow, extraValueCellRef: budgetCellRef } = addStyledMetaBanner(
     wsSynth,
     appData,
     'HISTORIQUE DES ÉTATS D’AVANCEMENT VALIDÉS',
-    6,
+    7,
     { label: 'Budget global marché :', value: budgetGlobal, numFmt: FMT_EUR }
   );
 
@@ -667,6 +727,7 @@ export async function exportEaValidesExcel(appData: ProjectData): Promise<void> 
     { label: 'Cumulé (€)', align: 'right' },
     { label: '% Budget', align: 'right' },
     { label: 'Solde marché (€)', align: 'right' },
+    { label: 'Remarque / Période', align: 'left' },
   ]);
 
   const sStart = synthHeaderRow + 1;
@@ -680,9 +741,9 @@ export async function exportEaValidesExcel(appData: ProjectData): Promise<void> 
     const rest = Math.round((budgetGlobal - cumul) * 100) / 100;
 
     const row = wsSynth.getRow(curS);
-    row.height = 20;
+    row.height = Math.max(20, Math.ceil((ea.remarque || '').length / 30) * 12.5);
     const bg = idx % 2 === 1 ? 'FFF8FAFC' : 'FFFFFFFF';
-    const bRef = budgetCellRef || '$E$5';
+    const bRef = budgetCellRef || '$F$5';
 
     const vals: unknown[] = [
       ea.indice,
@@ -693,6 +754,7 @@ export async function exportEaValidesExcel(appData: ProjectData): Promise<void> 
         : { formula: `D${curS - 1}+C${curS}`, result: cumul },
       { formula: `IF(${bRef}>0,D${curS}/${bRef},0)`, result: pct },
       { formula: `${bRef}-D${curS}`, result: rest },
+      ea.remarque || '',
     ];
 
     vals.forEach((v, cIdx) => {
@@ -708,8 +770,9 @@ export async function exportEaValidesExcel(appData: ProjectData): Promise<void> 
         color: { argb: col === 6 && rest < 0 ? 'FFDC2626' : 'FF0F172A' },
       };
       cell.alignment = {
-        horizontal: col <= 2 ? 'center' : 'right',
+        horizontal: col <= 2 ? 'center' : col === 7 ? 'left' : 'right',
         vertical: 'middle',
+        wrapText: true,
       };
       if (col === 3 || col === 4 || col === 6) cell.numFmt = FMT_EUR;
       if (col === 5) cell.numFmt = FMT_PCT;
@@ -732,7 +795,7 @@ export async function exportEaValidesExcel(appData: ProjectData): Promise<void> 
     sEnd >= sStart ? { formula: `D${sEnd}`, result: cumul } : 0;
   sTot.getCell(4).numFmt = FMT_EUR;
   sTot.getCell(4).alignment = { horizontal: 'right', vertical: 'middle' };
-  const bRef = budgetCellRef || '$E$5';
+  const bRef = budgetCellRef || '$F$5';
   sTot.getCell(5).value =
     sEnd >= sStart
       ? { formula: `IF(${bRef}>0,D${curS}/${bRef},0)`, result: budgetGlobal > 0 ? cumul / budgetGlobal : 0 }
@@ -746,7 +809,7 @@ export async function exportEaValidesExcel(appData: ProjectData): Promise<void> 
   sTot.getCell(6).numFmt = FMT_EUR;
   sTot.getCell(6).alignment = { horizontal: 'right', vertical: 'middle' };
 
-  for (let cc = 1; cc <= 6; cc++) {
+  for (let cc = 1; cc <= 7; cc++) {
     const c = sTot.getCell(cc);
     c.border = TOTAL_BORDERS;
     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
@@ -882,15 +945,31 @@ export interface CumulExportRow {
 
 export async function exportCumulExcel(
   appData: ProjectData,
-  rowsData: CumulExportRow[]
+  rowsData: CumulExportRow[],
+  includeJustification = true
 ): Promise<void> {
   const wb = new ExcelJS.Workbook();
   wb.creator = 'ProjectController - F.Pirquin - INASEP';
   wb.created = new Date();
 
+  appendCumulWorksheet(wb, appData, rowsData, includeJustification);
+
+  await downloadExcelWorkbook(
+    wb,
+    `${appData.nomProjet || 'Chantier'}_Cumul_Concordance.xlsx`
+  );
+}
+
+function appendCumulWorksheet(
+  wb: ExcelJS.Workbook,
+  appData: ProjectData,
+  rowsData: CumulExportRow[],
+  includeJustification = true
+): void {
   const ws = wb.addWorksheet(safeSheetName('Cumul_Concordance'));
   applyStandardPageSetup(ws, 'landscape');
-  ws.columns = [
+  const totalCols = includeJustification ? 15 : 14;
+  const cols: Partial<ExcelJS.Column>[] = [
     { width: 12 }, // A: N° Poste
     { width: 36 }, // B: Description
     { width: 8 }, // C: Unité
@@ -906,15 +985,19 @@ export async function exportCumulExcel(
     { width: 11 }, // M: % Exécuté
     { width: 15 }, // N: Écart (€)
   ];
+  if (includeJustification) {
+    cols.push({ width: 32 }); // O: Justification
+  }
+  ws.columns = cols;
 
   const { nextRow: headerRowIdx } = addStyledMetaBanner(
     ws,
     appData,
     'CUMUL & CONCORDANCE BUDGÉTAIRE',
-    14
+    totalCols
   );
 
-  styleTableHeaderRow(ws, headerRowIdx, [
+  const headers: Array<{ label: string; align?: 'left' | 'center' | 'right' }> = [
     { label: 'N° Poste', align: 'center' },
     { label: 'Description', align: 'left' },
     { label: 'Unité', align: 'center' },
@@ -929,7 +1012,11 @@ export async function exportCumulExcel(
     { label: 'Solde Qté', align: 'right' },
     { label: '% Exécuté', align: 'right' },
     { label: 'Écart (€)', align: 'right' },
-  ]);
+  ];
+  if (includeJustification) {
+    headers.push({ label: 'Justification', align: 'left' });
+  }
+  styleTableHeaderRow(ws, headerRowIdx, headers);
 
   const dStart = headerRowIdx + 1;
   let curR = dStart;
@@ -942,8 +1029,15 @@ export async function exportCumulExcel(
     totEA = Math.round((totEA + r.mEA) * 100) / 100;
     totReel = Math.round((totReel + r.mReel) * 100) / 100;
 
+    const justif = includeJustification
+      ? appData.justificationsCumul?.[r.p.id] || ''
+      : '';
     const row = ws.getRow(curR);
-    row.height = Math.max(19, Math.ceil((r.p.desc || '').length / 34) * 12.5);
+    row.height = Math.max(
+      19,
+      Math.ceil((r.p.desc || '').length / 34) * 12.5,
+      Math.ceil(justif.length / 30) * 12.5
+    );
     const bg = idx % 2 === 1 ? 'FFF8FAFC' : 'FFFFFFFF';
 
     const pu = Math.round(r.p.pu * 100) / 100;
@@ -967,6 +1061,9 @@ export async function exportCumulExcel(
       { formula: `IF(F${curR}>0,K${curR}/F${curR},0)`, result: r.pct / 100 },
       { formula: `K${curR}-F${curR}`, result: Math.round(r.ecart * 100) / 100 },
     ];
+    if (includeJustification) {
+      vals.push(justif);
+    }
 
     vals.forEach((v, cIdx) => {
       const col = cIdx + 1;
@@ -988,7 +1085,12 @@ export async function exportCumulExcel(
         color: { argb: fontColor },
       };
       cell.alignment = {
-        horizontal: col === 1 || col === 3 ? 'center' : col >= 4 ? 'right' : 'left',
+        horizontal:
+          col === 1 || col === 3
+            ? 'center'
+            : col >= 4 && col <= 14
+            ? 'right'
+            : 'left',
         vertical: 'middle',
         wrapText: true,
       };
@@ -1041,7 +1143,7 @@ export async function exportCumulExcel(
   totRow.getCell(14).numFmt = FMT_EUR;
   totRow.getCell(14).alignment = { horizontal: 'right', vertical: 'middle' };
 
-  for (let cc = 1; cc <= 14; cc++) {
+  for (let cc = 1; cc <= totalCols; cc++) {
     const c = totRow.getCell(cc);
     c.border = TOTAL_BORDERS;
     c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
@@ -1059,11 +1161,6 @@ export async function exportCumulExcel(
       },
     };
   }
-
-  await downloadExcelWorkbook(
-    wb,
-    `${appData.nomProjet || 'Chantier'}_Cumul_Concordance.xlsx`
-  );
 }
 
 // ─── 5. EXPORT FEUILLE DE DÉLAIS (CANVAS OFFICIEL INASEP + FORMULES) ────────
