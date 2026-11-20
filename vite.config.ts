@@ -20,7 +20,7 @@ export default defineConfig(() => {
           'pwa-maskable-512x512.png',
         ],
         manifest: {
-          id: './',
+          id: './projectcontroller-v2',
           name: 'ProjectController V2.0',
           short_name: 'ProjectController V2.0',
           description:
@@ -55,6 +55,7 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          cacheId: 'projectcontroller-v2',
           cleanupOutdatedCaches: true,
           clientsClaim: true,
           skipWaiting: true,

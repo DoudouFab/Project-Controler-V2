@@ -51,7 +51,16 @@
                 .then(function () {
                   if ('serviceWorker' in navigator) {
                     return navigator.serviceWorker.getRegistrations().then(function (regs) {
-                      return Promise.all(regs.map(function (r) { return r.unregister(); }));
+                      var ctrlUrl = navigator.serviceWorker.controller && navigator.serviceWorker.controller.scriptURL;
+                      return Promise.all(regs.map(function (r) {
+                        var scopePath = '/';
+                        try { scopePath = new URL(r.scope).pathname; } catch (e) {}
+                        var affectsHere = window.location.pathname.indexOf(scopePath) === 0;
+                        var isCtrl = ctrlUrl && r.active && r.active.scriptURL === ctrlUrl;
+                        if (affectsHere || isCtrl) {
+                          return r.unregister();
+                        }
+                      }));
                     });
                   }
                 })
