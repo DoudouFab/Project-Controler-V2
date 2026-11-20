@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   WifiOff,
 } from 'lucide-react';
+import { PWAInstallButton } from './PWAInstallButton';
 import {
   AccessUserDoc,
   auth,
@@ -518,16 +519,19 @@ export const AuthGate: React.FC<AuthGateProps> = ({ children }) => {
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-lg overflow-hidden">
         {/* En-tête application */}
-        <div className="px-6 py-5 bg-[#1e3a5f] text-white flex items-center gap-3.5">
-          <div className="w-10 h-10 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0">
-            <ShieldCheck className="w-5 h-5 text-sky-200" />
+        <div className="px-6 py-5 bg-[#1e3a5f] text-white flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3.5 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-5 h-5 text-sky-200" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-base font-bold tracking-tight">ProjectController V2.0</h1>
+              <p className="text-xs text-sky-100/90">
+                Gestion de chantier, mesurage &amp; suivi des délais
+              </p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <h1 className="text-base font-bold tracking-tight">ProjectController</h1>
-            <p className="text-xs text-sky-100/90">
-              Gestion de chantier, mesurage &amp; suivi des délais
-            </p>
-          </div>
+          <PWAInstallButton variant="auth" />
         </div>
 
         <div className="p-6">

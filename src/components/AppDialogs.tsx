@@ -22,7 +22,7 @@ export const ToastContainer: React.FC<{
 }> = ({ toasts, onDismiss }) => {
   if (!toasts.length) return null;
   return (
-    <div className="no-print fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-md">
+    <div className="no-print fixed bottom-4 right-4 z-[80] flex flex-col gap-2 max-w-md">
       {toasts.map((t) => {
         const cls =
           t.type === 'success'
@@ -61,7 +61,7 @@ export const ConfirmDialog: React.FC<{
 }> = ({ dialog, onClose }) => {
   if (!dialog) return null;
   return (
-    <div className="no-print fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+    <div className="no-print fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/60 p-4">
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4">
         <div className="flex items-start justify-between gap-3">
           <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">

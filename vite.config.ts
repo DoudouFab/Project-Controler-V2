@@ -21,17 +21,18 @@ export default defineConfig(() => {
         ],
         manifest: {
           id: './',
-          name: 'ProjectController',
-          short_name: 'ProjectCtrl',
+          name: 'ProjectController V2.0',
+          short_name: 'ProjectController V2.0',
           description:
             "Gestion de chantier d'égouttage et voirie — bordereau 3P, tronçons, carnet de mesurage, EA et délais.",
-          theme_color: '#1e3a5f',
-          background_color: '#0f172a',
+          theme_color: '#f8fafc',
+          background_color: '#ffffff',
           display: 'standalone',
           orientation: 'any',
           lang: 'fr',
           start_url: './',
           scope: './',
+          prefer_related_applications: false,
           icons: [
             {
               src: 'pwa-192x192.png',
@@ -60,6 +61,7 @@ export default defineConfig(() => {
           globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,woff2}'],
           globIgnores: ['**/assets/aistudio/**', '**/exemple_hamois.json'],
           maximumFileSizeToCacheInBytes: 8 * 1024 * 1024,
+          navigateFallback: 'index.html',
           navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
             {

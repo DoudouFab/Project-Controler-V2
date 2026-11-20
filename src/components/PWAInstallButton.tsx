@@ -2,8 +2,12 @@ import React, { useState } from 'react';
 import { Download, Share, Smartphone, X } from 'lucide-react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 
-export const PWAInstallButton: React.FC = () => {
-  const { canNativePrompt, isInstalled, isIOS, promptInstall } = usePWAInstall();
+interface PWAInstallButtonProps {
+  variant?: 'header' | 'auth';
+}
+
+export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ variant = 'header' }) => {
+  const { canNativePrompt, isInstalled, isIOS, isAndroid, promptInstall } = usePWAInstall();
   const [showGuide, setShowGuide] = useState(false);
 
   if (isInstalled) return null;
@@ -16,21 +20,26 @@ export const PWAInstallButton: React.FC = () => {
     setShowGuide(true);
   };
 
+  const buttonClass =
+    variant === 'auth'
+      ? 'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-white/15 hover:bg-white/25 border border-white/25 text-white cursor-pointer whitespace-nowrap shrink-0'
+      : 'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-800 dark:text-sky-300 cursor-pointer whitespace-nowrap shrink-0';
+
   return (
     <>
       <button
         type="button"
         onClick={() => void handleClick()}
-        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/50 hover:bg-sky-100 dark:hover:bg-sky-900/60 text-sky-800 dark:text-sky-300 cursor-pointer whitespace-nowrap shrink-0"
-        title="Installer ProjectController comme application (bureau / mobile)"
+        className={buttonClass}
+        title="Installer ProjectController V2.0 sur Android, iOS ou ordinateur"
       >
         <Download className="w-3.5 h-3.5" />
-        Installer
+        <span>Installer</span>
       </button>
 
       {showGuide && (
         <div
-          className="no-print fixed inset-0 z-50 bg-slate-950/60 flex items-center justify-center p-4"
+          className="no-print fixed inset-0 z-[75] bg-slate-950/60 flex items-center justify-center p-4"
           onClick={() => setShowGuide(false)}
         >
           <div
@@ -40,12 +49,13 @@ export const PWAInstallButton: React.FC = () => {
             <div className="px-5 py-3.5 bg-[#1e3a5f] text-white flex items-center justify-between">
               <div className="flex items-center gap-2 text-sm font-bold">
                 <Smartphone className="w-4 h-4 text-sky-300" />
-                Installer l’application
+                Installer ProjectController V2.0
               </div>
               <button
                 type="button"
                 onClick={() => setShowGuide(false)}
                 className="p-1 rounded hover:bg-white/10 cursor-pointer"
+                aria-label="Fermer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -65,24 +75,46 @@ export const PWAInstallButton: React.FC = () => {
                       Faites défiler et choisissez <strong>« Sur l’écran d’accueil »</strong>.
                     </li>
                     <li>
-                      Confirmez en appuyant sur <strong>Ajouter</strong>.
+                      Vérifiez le nom <strong>ProjectController V2.0</strong> puis appuyez sur{' '}
+                      <strong>Ajouter</strong>.
+                    </li>
+                  </ol>
+                </>
+              ) : isAndroid ? (
+                <>
+                  <p>
+                    Pour installer <strong>ProjectController V2.0</strong> directement sur Android :
+                  </p>
+                  <ol className="list-decimal pl-4 space-y-1.5">
+                    <li>
+                      Ouvrez l’application dans <strong>Google Chrome</strong> (hors navigateur intégré d’une autre app).
+                    </li>
+                    <li>
+                      Appuyez sur le menu <strong>⋮</strong> en haut à droite de Chrome, puis sur{' '}
+                      <strong>« Ajouter à l’écran d’accueil »</strong> →{' '}
+                      <strong>« Installer »</strong>.
+                    </li>
+                    <li>
+                      L’icône <strong>ProjectController V2.0</strong> apparaît directement sur votre écran d’accueil Android et fonctionne en plein écran.
                     </li>
                   </ol>
                 </>
               ) : (
                 <>
                   <p>
-                    Pour installer <strong>ProjectController</strong> sur votre ordinateur ou téléphone Android :
+                    Pour installer <strong>ProjectController V2.0</strong> sur votre ordinateur ou téléphone Android :
                   </p>
                   <ol className="list-decimal pl-4 space-y-1.5">
                     <li>
-                      Ouvrez l’application directement dans son propre onglet Chrome ou Edge (hors fenêtre intégrée).
+                      Ouvrez l’application directement dans Chrome ou Edge (hors fenêtre intégrée).
                     </li>
                     <li>
-                      Cliquez sur l’icône <strong>Installer</strong> dans la barre d’adresse à droite, ou dans le menu <strong>⋮ → Caster, enregistrer et partager → Installer la page en tant qu’application</strong>.
+                      Cliquez sur l’icône <strong>Installer</strong> dans la barre d’adresse à droite, ou dans le menu{' '}
+                      <strong>⋮ → Ajouter à l’écran d’accueil / Installer l’application</strong>.
                     </li>
                     <li>
-                      Une fois installée, l’application dispose de son icône dédiée et reste utilisable hors-ligne.
+                      L’application dispose ensuite de son raccourci{' '}
+                      <strong>ProjectController V2.0</strong> et reste utilisable hors-ligne.
                     </li>
                   </ol>
                 </>

@@ -71,6 +71,8 @@ const QualiroutesModal = React.lazy(() =>
 
 const STORAGE_DATA_KEY = 'projectcontroller_inasep_data';
 const STORAGE_THEME_KEY = 'projectcontroller_theme';
+const STORAGE_ACTIVE_DOSSIER_KEY = 'projectcontroller_active_dossier_id';
+const STORAGE_IDB_DIRTY_KEY = 'projectcontroller_idb_pending';
 
 function normalizeProjectData(raw: unknown): ProjectData {
   const base = genererStructureVierge();
@@ -239,11 +241,14 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
   const redoStackRef = useRef<ProjectData[]>([]);
   const [historyCounts, setHistoryCounts] = useState({ undo: 0, redo: 0 });
   const appDataRef = useRef<ProjectData>(appData);
+  const activeDossierIdRef = useRef<string | null>(activeDossierId);
   const dbReadyRef = useRef<boolean>(false);
-  const skipNextDbPersistRef = useRef<boolean>(false);
+  const lastLoadedDataRef = useRef<ProjectData | null>(null);
+  const persistTimerRef = useRef<number | null>(null);
   const linkedFileHandleRef = useRef<LocalFileHandleLike | null>(null);
 
   appDataRef.current = appData;
+  activeDossierIdRef.current = activeDossierId;
 
   useEffect(() => {
     const onUp = () => setIsOnline(true);
@@ -292,50 +297,153 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_DATA_KEY, JSON.stringify(appData));
+      if (dbReadyRef.current && lastLoadedDataRef.current !== appData) {
+        localStorage.setItem(STORAGE_IDB_DIRTY_KEY, '1');
+      }
     } catch {
       // Ignore quota errors silently
     }
   }, [appData]);
 
-  // Initialisation du workspace multi-dossiers IndexedDB
+  // Initialisation du workspace multi-dossiers IndexedDB (avec récupération fallback)
   useEffect(() => {
     let alive = true;
-    initDossiersWorkspace(appDataRef.current, normalizeProjectData).then((res) => {
-      if (!alive) return;
-      skipNextDbPersistRef.current = true;
-      dbReadyRef.current = true;
-      setActiveDossierId(res.activeId);
-      setDossiers(res.dossiers);
-      setAutoSaveEnabled(res.prefs.autoSaveEnabled);
-      setLastAutoSaveAt(res.prefs.lastAutoSaveAt || null);
-      setAppData(res.activeData);
+    const initialLocal = appDataRef.current;
+    let savedActiveHint: string | null = null;
+    let hadPendingLocal = false;
+    try {
+      savedActiveHint = localStorage.getItem(STORAGE_ACTIVE_DOSSIER_KEY);
+      hadPendingLocal = localStorage.getItem(STORAGE_IDB_DIRTY_KEY) === '1';
+    } catch {
+      // Ignore
+    }
 
-      const rec = res.dossiers.find((d) => d.id === res.activeId);
-      const dirty = rec
-        ? !rec.lastJsonExportAt || rec.updatedAt > rec.lastJsonExportAt
-        : false;
-      setIsDirtySinceJson(dirty);
-    });
+    initDossiersWorkspace(initialLocal, normalizeProjectData)
+      .then(async (res) => {
+        if (!alive) return;
+        let finalData = res.activeData;
+        let finalDossiers = res.dossiers;
+
+        // Si une modification récente localStorage n'avait pas fini d'être écrite en IDB avant rechargement
+        if (hadPendingLocal && savedActiveHint === res.activeId) {
+          finalData = initialLocal;
+          await upsertDossier(res.activeId, initialLocal);
+          finalDossiers = await listDossiers();
+        }
+        try {
+          localStorage.setItem(STORAGE_ACTIVE_DOSSIER_KEY, res.activeId);
+          localStorage.removeItem(STORAGE_IDB_DIRTY_KEY);
+        } catch {
+          // Ignore
+        }
+
+        lastLoadedDataRef.current = finalData;
+        dbReadyRef.current = true;
+        setActiveDossierId(res.activeId);
+        setDossiers(finalDossiers);
+        setAutoSaveEnabled(res.prefs.autoSaveEnabled);
+        setLastAutoSaveAt(res.prefs.lastAutoSaveAt || null);
+        setAppData(finalData);
+
+        const rec = finalDossiers.find((d) => d.id === res.activeId);
+        const dirty = rec
+          ? !rec.lastJsonExportAt || rec.updatedAt > rec.lastJsonExportAt
+          : false;
+        setIsDirtySinceJson(dirty);
+      })
+      .catch(async () => {
+        if (!alive) return;
+        const fallbackId = savedActiveHint || generateDossierId();
+        const rec = await upsertDossier(fallbackId, initialLocal);
+        try {
+          localStorage.setItem(STORAGE_ACTIVE_DOSSIER_KEY, fallbackId);
+          localStorage.removeItem(STORAGE_IDB_DIRTY_KEY);
+        } catch {
+          // Ignore
+        }
+        lastLoadedDataRef.current = initialLocal;
+        dbReadyRef.current = true;
+        setActiveDossierId(fallbackId);
+        setDossiers([rec]);
+      });
+
     return () => {
       alive = false;
     };
   }, []);
 
+  const flushActiveDossierPersist = useCallback(async () => {
+    if (persistTimerRef.current !== null) {
+      window.clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+    const id = activeDossierIdRef.current;
+    if (!dbReadyRef.current || !id) return;
+    await upsertDossier(id, appDataRef.current);
+    try {
+      localStorage.removeItem(STORAGE_IDB_DIRTY_KEY);
+    } catch {
+      // Ignore
+    }
+    const list = await listDossiers();
+    setDossiers(list);
+  }, []);
+
   // Persistance debounced dans le dossier IndexedDB actif
   useEffect(() => {
     if (!dbReadyRef.current || !activeDossierId) return;
-    if (skipNextDbPersistRef.current) {
-      skipNextDbPersistRef.current = false;
+    if (lastLoadedDataRef.current === appData) {
+      lastLoadedDataRef.current = null;
       return;
     }
-    const t = window.setTimeout(() => {
+    if (persistTimerRef.current !== null) {
+      window.clearTimeout(persistTimerRef.current);
+    }
+    persistTimerRef.current = window.setTimeout(() => {
+      persistTimerRef.current = null;
       void upsertDossier(activeDossierId, appData).then(async () => {
+        try {
+          localStorage.removeItem(STORAGE_IDB_DIRTY_KEY);
+        } catch {
+          // Ignore
+        }
         const list = await listDossiers();
         setDossiers(list);
       });
-    }, 450);
-    return () => window.clearTimeout(t);
+    }, 350);
+    return () => {
+      if (persistTimerRef.current !== null) {
+        window.clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+    };
   }, [appData, activeDossierId]);
+
+  // Flush immédiat si l'onglet est mis en arrière-plan ou fermé sur Android / Desktop
+  useEffect(() => {
+    const flushNow = () => {
+      if (persistTimerRef.current !== null && activeDossierIdRef.current && dbReadyRef.current) {
+        window.clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+        void upsertDossier(activeDossierIdRef.current, appDataRef.current).then(() => {
+          try {
+            localStorage.removeItem(STORAGE_IDB_DIRTY_KEY);
+          } catch {
+            // Ignore
+          }
+        });
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') flushNow();
+    };
+    window.addEventListener('pagehide', flushNow);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', flushNow);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, []);
 
   // Sauvegarde automatique périodique toutes les 7 minutes
   useEffect(() => {
@@ -472,6 +580,10 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     if (activeDossierId) {
+      if (persistTimerRef.current !== null) {
+        window.clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
       await upsertDossier(activeDossierId, appData);
       await markDossierExported(activeDossierId);
       setDossiers(await listDossiers());
@@ -480,7 +592,87 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
     notify('success', `Sauvegarde exportée : ${safeName}_sauvegarde.json`);
   };
 
-  const handleLoadJsonFile = async (file: File) => {
+  const activateDossierState = useCallback(
+    async (
+      id: string,
+      data: ProjectData,
+      opts: { dirtySinceJson: boolean; closeModal?: boolean; tab?: number }
+    ) => {
+      lastLoadedDataRef.current = data;
+      dbReadyRef.current = true;
+      setActiveDossierId(id);
+      setAppData(data);
+      clearHistory();
+      linkedFileHandleRef.current = null;
+      setLinkedFileName(null);
+      setIsDirtySinceJson(opts.dirtySinceJson);
+      try {
+        localStorage.setItem(STORAGE_ACTIVE_DOSSIER_KEY, id);
+        localStorage.removeItem(STORAGE_IDB_DIRTY_KEY);
+      } catch {
+        // Ignore
+      }
+      await savePrefs({
+        id: 'prefs',
+        activeDossierId: id,
+        autoSaveEnabled,
+        autoSaveIntervalMin: 7,
+        lastAutoSaveAt: lastAutoSaveAt || undefined,
+      });
+      setDossiers(await listDossiers());
+      if (opts.closeModal) setShowDossiersModal(false);
+      if (opts.tab) setActiveTab(opts.tab);
+    },
+    [autoSaveEnabled, clearHistory, lastAutoSaveAt]
+  );
+
+  const openParsedJsonProject = async (norm: ProjectData, forceNewDossier: boolean) => {
+    const cur = appDataRef.current;
+    const curHasContent =
+      cur.marche3P.length > 0 ||
+      cur.tronconsEgout.length > 0 ||
+      cur.historiqueEA.length > 0 ||
+      Boolean(cur.infosAdministratives.marche);
+
+    const isDifferentChantier =
+      norm.nomProjet !== cur.nomProjet ||
+      (norm.infosAdministratives.marche || '') !== (cur.infosAdministratives.marche || '');
+
+    const now = new Date().toISOString();
+
+    if (forceNewDossier || (curHasContent && isDifferentChantier)) {
+      await flushActiveDossierPersist();
+      const newId = generateDossierId();
+      await upsertDossier(newId, norm, { lastJsonExportAt: now });
+      await activateDossierState(newId, norm, {
+        dirtySinceJson: false,
+        closeModal: true,
+        tab: 1,
+      });
+      notify(
+        'success',
+        `Nouveau chantier ajouté à « Mes chantiers » : ${norm.nomProjet} (${norm.marche3P.length} postes, ${norm.tronconsEgout.length} tronçons).`
+      );
+      return;
+    }
+
+    const targetId = activeDossierIdRef.current || generateDossierId();
+    if (persistTimerRef.current !== null) {
+      window.clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+    await upsertDossier(targetId, norm, { lastJsonExportAt: now });
+    await activateDossierState(targetId, norm, {
+      dirtySinceJson: false,
+      closeModal: forceNewDossier,
+    });
+    notify(
+      'success',
+      `Projet chargé : ${norm.nomProjet} (${norm.marche3P.length} postes, ${norm.tronconsEgout.length} tronçons, ${norm.historiqueEA.length} EA).`
+    );
+  };
+
+  const handleLoadJsonFile = async (file: File, forceNewDossier = false) => {
     try {
       const txt = await file.text();
       const parsed = JSON.parse(txt);
@@ -489,19 +681,7 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
         return;
       }
       const norm = normalizeProjectData(parsed);
-      skipNextDbPersistRef.current = true;
-      setAppData(norm);
-      clearHistory();
-      if (activeDossierId) {
-        const now = new Date().toISOString();
-        await upsertDossier(activeDossierId, norm, { lastJsonExportAt: now });
-        setDossiers(await listDossiers());
-      }
-      setIsDirtySinceJson(false);
-      notify(
-        'success',
-        `Projet chargé : ${norm.nomProjet} (${norm.marche3P.length} postes, ${norm.tronconsEgout.length} tronçons, ${norm.historiqueEA.length} EA).`
-      );
+      await openParsedJsonProject(norm, forceNewDossier);
     } catch (err) {
       notify(
         'error',
@@ -530,68 +710,41 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
   };
 
   const handleSwitchDossier = async (targetId: string) => {
-    if (targetId === activeDossierId) {
+    if (targetId === activeDossierIdRef.current) {
       setShowDossiersModal(false);
       return;
     }
-    if (activeDossierId) {
-      await upsertDossier(activeDossierId, appDataRef.current);
-    }
+    await flushActiveDossierPersist();
     const target = await getDossier(targetId);
-    if (!target) return;
+    if (!target) {
+      notify('error', 'Impossible de retrouver ce dossier local.');
+      return;
+    }
     const norm = normalizeProjectData(target.data);
-    skipNextDbPersistRef.current = true;
-    setActiveDossierId(target.id);
-    setAppData(norm);
-    clearHistory();
-    linkedFileHandleRef.current = null;
-    setLinkedFileName(null);
-    setIsDirtySinceJson(
-      !target.lastJsonExportAt || target.updatedAt > target.lastJsonExportAt
-    );
-    await savePrefs({
-      id: 'prefs',
-      activeDossierId: target.id,
-      autoSaveEnabled,
-      autoSaveIntervalMin: 7,
-      lastAutoSaveAt: lastAutoSaveAt || undefined,
+    await activateDossierState(target.id, norm, {
+      dirtySinceJson: !target.lastJsonExportAt || target.updatedAt > target.lastJsonExportAt,
+      closeModal: true,
+      tab: 1,
     });
-    setDossiers(await listDossiers());
-    setShowDossiersModal(false);
-    setActiveTab(1);
     notify('info', `Dossier ouvert : ${norm.nomProjet}`);
   };
 
   const handleCreateNewDossier = async () => {
-    if (activeDossierId) {
-      await upsertDossier(activeDossierId, appDataRef.current);
-    }
+    await flushActiveDossierPersist();
     const newId = generateDossierId();
     const blank = genererStructureVierge();
     await upsertDossier(newId, blank);
-    skipNextDbPersistRef.current = true;
-    setActiveDossierId(newId);
-    setAppData(blank);
-    clearHistory();
-    linkedFileHandleRef.current = null;
-    setLinkedFileName(null);
-    setIsDirtySinceJson(false);
-    await savePrefs({
-      id: 'prefs',
-      activeDossierId: newId,
-      autoSaveEnabled,
-      autoSaveIntervalMin: 7,
-      lastAutoSaveAt: lastAutoSaveAt || undefined,
+    await activateDossierState(newId, blank, {
+      dirtySinceJson: false,
+      closeModal: true,
+      tab: 1,
     });
-    setDossiers(await listDossiers());
-    setShowDossiersModal(false);
-    setActiveTab(1);
     notify('success', 'Nouveau dossier local vierge créé.');
   };
 
   const handleDuplicateDossier = async (sourceId: string) => {
-    if (sourceId === activeDossierId) {
-      await upsertDossier(sourceId, appDataRef.current);
+    if (sourceId === activeDossierIdRef.current) {
+      await flushActiveDossierPersist();
     }
     const src = await getDossier(sourceId);
     if (!src) return;
@@ -599,21 +752,9 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
     cloned.nomProjet = `${cloned.nomProjet || 'Chantier'}_copie`;
     const newId = generateDossierId();
     await upsertDossier(newId, cloned);
-    skipNextDbPersistRef.current = true;
-    setActiveDossierId(newId);
-    setAppData(cloned);
-    clearHistory();
-    linkedFileHandleRef.current = null;
-    setLinkedFileName(null);
-    setIsDirtySinceJson(true);
-    await savePrefs({
-      id: 'prefs',
-      activeDossierId: newId,
-      autoSaveEnabled,
-      autoSaveIntervalMin: 7,
-      lastAutoSaveAt: lastAutoSaveAt || undefined,
+    await activateDossierState(newId, cloned, {
+      dirtySinceJson: true,
     });
-    setDossiers(await listDossiers());
     notify('success', `Dossier dupliqué : ${cloned.nomProjet}`);
   };
 
@@ -626,11 +767,20 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
       confirmLabel: 'Supprimer',
       danger: true,
       onConfirm: async () => {
+        const deletingActive = targetId === activeDossierIdRef.current;
+        if (deletingActive && persistTimerRef.current !== null) {
+          window.clearTimeout(persistTimerRef.current);
+          persistTimerRef.current = null;
+        }
         await deleteDossier(targetId);
         const remaining = await listDossiers();
         setDossiers(remaining);
-        if (targetId === activeDossierId && remaining.length > 0) {
-          await handleSwitchDossier(remaining[0].id);
+        if (deletingActive && remaining.length > 0) {
+          const next = remaining[0];
+          const norm = normalizeProjectData(next.data);
+          await activateDossierState(next.id, norm, {
+            dirtySinceJson: !next.lastJsonExportAt || next.updatedAt > next.lastJsonExportAt,
+          });
         }
         notify('info', 'Dossier local supprimé.');
       },
@@ -657,13 +807,18 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
   };
 
   const handleSaveSnapshotNow = async () => {
-    if (!activeDossierId) return;
-    await upsertDossier(activeDossierId, appDataRef.current);
-    const snap = await saveSnapshot(activeDossierId, appDataRef.current, 'manual');
+    const id = activeDossierIdRef.current;
+    if (!id) return;
+    if (persistTimerRef.current !== null) {
+      window.clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = null;
+    }
+    await upsertDossier(id, appDataRef.current);
+    const snap = await saveSnapshot(id, appDataRef.current, 'manual');
     setLastAutoSaveAt(snap.savedAt);
     await savePrefs({
       id: 'prefs',
-      activeDossierId,
+      activeDossierId: id,
       autoSaveEnabled,
       autoSaveIntervalMin: 7,
       lastAutoSaveAt: snap.savedAt,
@@ -672,7 +827,7 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
       try {
         const ok = await writeProjectToFileHandle(linkedFileHandleRef.current, appDataRef.current);
         if (ok) {
-          await markDossierExported(activeDossierId);
+          await markDossierExported(id);
           setIsDirtySinceJson(false);
         }
       } catch {
@@ -691,11 +846,16 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
       danger: true,
       onConfirm: async () => {
         const norm = normalizeProjectData(snap.data);
-        skipNextDbPersistRef.current = true;
+        const id = activeDossierIdRef.current;
+        if (persistTimerRef.current !== null) {
+          window.clearTimeout(persistTimerRef.current);
+          persistTimerRef.current = null;
+        }
+        lastLoadedDataRef.current = norm;
         setAppData(norm);
         clearHistory();
-        if (activeDossierId) {
-          await upsertDossier(activeDossierId, norm);
+        if (id) {
+          await upsertDossier(id, norm);
           setDossiers(await listDossiers());
         }
         setShowDossiersModal(false);
@@ -906,7 +1066,7 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap">
-                    ProjectController
+                    ProjectController V2.0
                   </span>
                   <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">
                     Gestion Chantier &amp; Décomptes · F.Pirquin
@@ -1246,6 +1406,7 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
           onClose={() => setShowDossiersModal(false)}
           onSwitchDossier={(id) => void handleSwitchDossier(id)}
           onCreateNewDossier={() => void handleCreateNewDossier()}
+          onImportJsonAsNewDossier={(file) => void handleLoadJsonFile(file, true)}
           onDuplicateDossier={(id) => void handleDuplicateDossier(id)}
           onDeleteDossier={handleDeleteDossier}
           onToggleAutoSave={(en) => void handleToggleAutoSave(en)}

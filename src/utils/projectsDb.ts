@@ -6,6 +6,7 @@ const DB_VERSION = 1;
 const STORE_CHANTIERS = 'chantiers';
 const STORE_SNAPSHOTS = 'snapshots';
 const STORE_PREFS = 'prefs';
+const FALLBACK_STORAGE_KEY = 'projectcontroller_chantiers_fallback_v1';
 
 export interface ChantierRecord {
   id: string;
@@ -37,8 +38,52 @@ export interface DossiersPrefs {
   lastAutoSaveAt?: string;
 }
 
+interface FallbackStore {
+  chantiers: Record<string, ChantierRecord>;
+  snapshots: SnapshotRecord[];
+  prefs: DossiersPrefs | null;
+}
+
+function readFallbackStore(): FallbackStore {
+  try {
+    const raw = localStorage.getItem(FALLBACK_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<FallbackStore>;
+      return {
+        chantiers: parsed.chantiers && typeof parsed.chantiers === 'object' ? parsed.chantiers : {},
+        snapshots: Array.isArray(parsed.snapshots) ? parsed.snapshots : [],
+        prefs: parsed.prefs || null,
+      };
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return { chantiers: {}, snapshots: [], prefs: null };
+}
+
+function writeFallbackStore(store: FallbackStore): void {
+  try {
+    localStorage.setItem(FALLBACK_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // Si quota atteint, ne garder que les 2 derniers snapshots en fallback
+    try {
+      const trimmed: FallbackStore = {
+        ...store,
+        snapshots: store.snapshots.slice(0, 2),
+      };
+      localStorage.setItem(FALLBACK_STORAGE_KEY, JSON.stringify(trimmed));
+    } catch {
+      // Ignore si localStorage saturé
+    }
+  }
+}
+
+let cachedDbPromise: Promise<IDBDatabase> | null = null;
+
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (cachedDbPromise) return cachedDbPromise;
+
+  cachedDbPromise = new Promise<IDBDatabase>((resolve, reject) => {
     if (typeof indexedDB === 'undefined') {
       reject(new Error('IndexedDB indisponible'));
       return;
@@ -47,11 +92,21 @@ function openDb(): Promise<IDBDatabase> {
     const timer = window.setTimeout(() => {
       if (!settled) {
         settled = true;
+        cachedDbPromise = null;
         reject(new Error('Délai dépassé ouverture IndexedDB'));
       }
     }, 3000);
 
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    let req: IDBOpenDBRequest;
+    try {
+      req = indexedDB.open(DB_NAME, DB_VERSION);
+    } catch (err) {
+      window.clearTimeout(timer);
+      cachedDbPromise = null;
+      reject(err instanceof Error ? err : new Error('Erreur ouverture IndexedDB'));
+      return;
+    }
+
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE_CHANTIERS)) {
@@ -67,15 +122,24 @@ function openDb(): Promise<IDBDatabase> {
     };
     req.onsuccess = () => {
       window.clearTimeout(timer);
+      const db = req.result;
+      db.onversionchange = () => {
+        db.close();
+        cachedDbPromise = null;
+      };
+      db.onclose = () => {
+        cachedDbPromise = null;
+      };
       if (!settled) {
         settled = true;
-        resolve(req.result);
+        resolve(db);
       }
     };
     req.onerror = () => {
       window.clearTimeout(timer);
       if (!settled) {
         settled = true;
+        cachedDbPromise = null;
         reject(req.error || new Error('Erreur ouverture IndexedDB'));
       }
     };
@@ -83,10 +147,13 @@ function openDb(): Promise<IDBDatabase> {
       window.clearTimeout(timer);
       if (!settled) {
         settled = true;
+        cachedDbPromise = null;
         reject(new Error('IndexedDB bloquée par un autre onglet'));
       }
     };
   });
+
+  return cachedDbPromise;
 }
 
 export function generateDossierId(): string {
@@ -112,18 +179,24 @@ function computeSummary(data: ProjectData): Pick<
 export async function getPrefs(): Promise<DossiersPrefs | null> {
   try {
     const db = await openDb();
-    return await new Promise((resolve, reject) => {
+    const res = await new Promise<DossiersPrefs | null>((resolve, reject) => {
       const tx = db.transaction(STORE_PREFS, 'readonly');
       const req = tx.objectStore(STORE_PREFS).get('prefs');
       req.onsuccess = () => resolve((req.result as DossiersPrefs) || null);
       req.onerror = () => reject(req.error);
     });
+    if (res) return res;
   } catch {
-    return null;
+    // Fallback localStorage ci-dessous
   }
+  return readFallbackStore().prefs;
 }
 
 export async function savePrefs(prefs: DossiersPrefs): Promise<void> {
+  const fb = readFallbackStore();
+  fb.prefs = prefs;
+  writeFallbackStore(fb);
+
   try {
     const db = await openDb();
     await new Promise<void>((resolve, reject) => {
@@ -133,37 +206,58 @@ export async function savePrefs(prefs: DossiersPrefs): Promise<void> {
       tx.onerror = () => reject(tx.error);
     });
   } catch {
-    // Ignorer si stockage indisponible
+    // Fallback déjà écrit
   }
 }
 
 export async function listDossiers(): Promise<ChantierRecord[]> {
+  let idbList: ChantierRecord[] = [];
   try {
     const db = await openDb();
-    const list = await new Promise<ChantierRecord[]>((resolve, reject) => {
+    idbList = await new Promise<ChantierRecord[]>((resolve, reject) => {
       const tx = db.transaction(STORE_CHANTIERS, 'readonly');
       const req = tx.objectStore(STORE_CHANTIERS).getAll();
       req.onsuccess = () => resolve((req.result as ChantierRecord[]) || []);
       req.onerror = () => reject(req.error);
     });
-    return list.sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''));
   } catch {
-    return [];
+    // Utiliser fallback
   }
+
+  const fbMap = readFallbackStore().chantiers;
+  const merged = new Map<string, ChantierRecord>();
+  for (const r of Object.values(fbMap)) {
+    merged.set(r.id, r);
+  }
+  for (const r of idbList) {
+    const existing = merged.get(r.id);
+    if (!existing || (r.updatedAt || '') >= (existing.updatedAt || '')) {
+      merged.set(r.id, r);
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) =>
+    (b.updatedAt || '').localeCompare(a.updatedAt || '')
+  );
 }
 
 export async function getDossier(id: string): Promise<ChantierRecord | null> {
+  let idbRec: ChantierRecord | null = null;
   try {
     const db = await openDb();
-    return await new Promise((resolve, reject) => {
+    idbRec = await new Promise<ChantierRecord | null>((resolve, reject) => {
       const tx = db.transaction(STORE_CHANTIERS, 'readonly');
       const req = tx.objectStore(STORE_CHANTIERS).get(id);
       req.onsuccess = () => resolve((req.result as ChantierRecord) || null);
       req.onerror = () => reject(req.error);
     });
   } catch {
-    return null;
+    // Fallback
   }
+  const fbRec = readFallbackStore().chantiers[id] || null;
+  if (idbRec && fbRec) {
+    return (idbRec.updatedAt || '') >= (fbRec.updatedAt || '') ? idbRec : fbRec;
+  }
+  return idbRec || fbRec;
 }
 
 export async function upsertDossier(
@@ -183,6 +277,10 @@ export async function upsertDossier(
     data,
   };
 
+  const fb = readFallbackStore();
+  fb.chantiers[id] = record;
+  writeFallbackStore(fb);
+
   try {
     const db = await openDb();
     await new Promise<void>((resolve, reject) => {
@@ -192,7 +290,7 @@ export async function upsertDossier(
       tx.onerror = () => reject(tx.error);
     });
   } catch {
-    // Fallback géré par localStorage
+    // Fallback déjà écrit
   }
   return record;
 }
@@ -209,6 +307,11 @@ export async function markDossierExported(id: string): Promise<string | null> {
 }
 
 export async function deleteDossier(id: string): Promise<void> {
+  const fb = readFallbackStore();
+  delete fb.chantiers[id];
+  fb.snapshots = fb.snapshots.filter((s) => s.dossierId !== id);
+  writeFallbackStore(fb);
+
   try {
     const db = await openDb();
     const snaps = await listSnapshots(id);
@@ -221,7 +324,7 @@ export async function deleteDossier(id: string): Promise<void> {
       tx.onerror = () => reject(tx.error);
     });
   } catch {
-    // Ignore
+    // Fallback déjà supprimé
   }
 }
 
@@ -235,10 +338,15 @@ export async function listSnapshots(dossierId: string): Promise<SnapshotRecord[]
       req.onsuccess = () => resolve((req.result as SnapshotRecord[]) || []);
       req.onerror = () => reject(req.error);
     });
-    return list.sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
+    if (list.length > 0) {
+      return list.sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
+    }
   } catch {
-    return [];
+    // Utiliser fallback
   }
+  return readFallbackStore()
+    .snapshots.filter((s) => s.dossierId === dossierId)
+    .sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
 }
 
 export async function saveSnapshot(
@@ -257,6 +365,14 @@ export async function saveSnapshot(
     data,
   };
 
+  const fb = readFallbackStore();
+  const fbForDossier = [snap, ...fb.snapshots.filter((s) => s.dossierId === dossierId)].slice(
+    0,
+    Math.min(maxKeep, 4)
+  );
+  fb.snapshots = [...fbForDossier, ...fb.snapshots.filter((s) => s.dossierId !== dossierId)];
+  writeFallbackStore(fb);
+
   try {
     const existing = await listSnapshots(dossierId);
     const toDelete = existing.slice(Math.max(0, maxKeep - 1));
@@ -270,7 +386,7 @@ export async function saveSnapshot(
       tx.onerror = () => reject(tx.error);
     });
   } catch {
-    // Ignore
+    // Fallback déjà écrit
   }
   return snap;
 }

@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Check,
   Clock,
   Copy,
   FilePlus2,
   FolderKanban,
+  FolderOpen,
   HardDriveDownload,
   History,
   Link2,
@@ -14,7 +15,6 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { ProjectData } from '../../types/project';
 import { fmt } from '../../utils/calculations';
 import {
   ChantierRecord,
@@ -33,6 +33,7 @@ interface DossiersModalProps {
   onClose: () => void;
   onSwitchDossier: (id: string) => void;
   onCreateNewDossier: () => void;
+  onImportJsonAsNewDossier: (file: File) => void;
   onDuplicateDossier: (id: string) => void;
   onDeleteDossier: (id: string) => void;
   onToggleAutoSave: (enabled: boolean) => void;
@@ -66,6 +67,7 @@ export const DossiersModal: React.FC<DossiersModalProps> = ({
   onClose,
   onSwitchDossier,
   onCreateNewDossier,
+  onImportJsonAsNewDossier,
   onDuplicateDossier,
   onDeleteDossier,
   onToggleAutoSave,
@@ -77,6 +79,7 @@ export const DossiersModal: React.FC<DossiersModalProps> = ({
 }) => {
   const [snapshots, setSnapshots] = useState<SnapshotRecord[]>([]);
   const [showSnapshots, setShowSnapshots] = useState(false);
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!activeDossierId) return;
@@ -107,7 +110,7 @@ export const DossiersModal: React.FC<DossiersModalProps> = ({
             <div>
               <div className="text-sm font-bold">Mes chantiers locaux &amp; Sauvegarde automatique</div>
               <div className="text-[11px] text-sky-100/80">
-                Stockage local multi-dossiers (IndexedDB — 0 lecture Firestore) · Instantanés auto toutes les 7 min
+                Stockage local multi-dossiers (0 lecture Firestore) · Instantanés auto toutes les 7 min
               </div>
             </div>
           </div>
@@ -217,7 +220,7 @@ export const DossiersModal: React.FC<DossiersModalProps> = ({
             <div className="font-bold uppercase tracking-wider text-[11px] text-slate-500 dark:text-slate-400">
               Dossiers enregistrés sur cet appareil ({dossiers.length})
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setShowSnapshots((v) => !v)}
@@ -226,6 +229,24 @@ export const DossiersModal: React.FC<DossiersModalProps> = ({
                 <History className="w-3.5 h-3.5" />
                 {showSnapshots ? 'Masquer historique auto' : `Historique auto (${snapshots.length})`}
               </button>
+              <button
+                type="button"
+                onClick={() => importInputRef.current?.click()}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 hover:bg-sky-100 text-sky-800 dark:text-sky-300 font-semibold cursor-pointer"
+              >
+                <FolderOpen className="w-3.5 h-3.5" /> Importer un .json
+              </button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept=".json,application/json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) onImportJsonAsNewDossier(file);
+                  e.target.value = '';
+                }}
+              />
               <button
                 type="button"
                 onClick={onCreateNewDossier}
@@ -238,83 +259,89 @@ export const DossiersModal: React.FC<DossiersModalProps> = ({
 
           {/* Liste des chantiers */}
           <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden divide-y divide-slate-200 dark:divide-slate-800">
-            {dossiers.map((d) => {
-              const isActive = d.id === activeDossierId;
-              return (
-                <div
-                  key={d.id}
-                  className={`p-3 flex flex-wrap items-center justify-between gap-3 ${
-                    isActive
-                      ? 'bg-sky-50/70 dark:bg-sky-950/30'
-                      : 'bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/40'
-                  }`}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      {isActive && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-700 text-white text-[10px] font-bold">
-                          <Check className="w-3 h-3" /> Actif
+            {dossiers.length === 0 ? (
+              <div className="p-4 text-center text-slate-500 dark:text-slate-400">
+                Aucun dossier trouvé. Cliquez sur « Nouveau dossier vierge » pour commencer.
+              </div>
+            ) : (
+              dossiers.map((d) => {
+                const isActive = d.id === activeDossierId;
+                return (
+                  <div
+                    key={d.id}
+                    className={`p-3 flex flex-wrap items-center justify-between gap-3 ${
+                      isActive
+                        ? 'bg-sky-50/70 dark:bg-sky-950/30'
+                        : 'bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        {isActive && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-700 text-white text-[10px] font-bold">
+                            <Check className="w-3 h-3" /> Actif
+                          </span>
+                        )}
+                        <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                          {d.nomProjet}
                         </span>
-                      )}
-                      <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
-                        {d.nomProjet}
-                      </span>
-                      {d.marche && (
-                        <span className="font-mono text-[11px] text-sky-700 dark:text-sky-400">
-                          {d.marche}
-                        </span>
-                      )}
-                    </div>
-                    {d.intitule && (
-                      <div className="text-[11px] text-slate-600 dark:text-slate-400 truncate mt-0.5">
-                        {d.intitule}
+                        {d.marche && (
+                          <span className="font-mono text-[11px] text-sky-700 dark:text-sky-400">
+                            {d.marche}
+                          </span>
+                        )}
                       </div>
-                    )}
-                    <div className="flex flex-wrap items-center gap-3 mt-1 text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                      <span>Budget : {fmt(d.budget)} €</span>
-                      <span>{d.nbTroncons} tronçon(s)</span>
-                      <span>{d.nbEA} EA validé(s)</span>
-                      <span>Modifié : {formatDateTimeFr(d.updatedAt)}</span>
-                      {d.lastJsonExportAt && (
-                        <span className="text-emerald-700 dark:text-emerald-400">
-                          Export JSON : {formatDateTimeFr(d.lastJsonExportAt)}
-                        </span>
+                      {d.intitule && (
+                        <div className="text-[11px] text-slate-600 dark:text-slate-400 truncate mt-0.5">
+                          {d.intitule}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-3 mt-1 text-[10px] text-slate-500 dark:text-slate-400 font-mono">
+                        <span>Budget : {fmt(d.budget)} €</span>
+                        <span>{d.nbTroncons} tronçon(s)</span>
+                        <span>{d.nbEA} EA validé(s)</span>
+                        <span>Modifié : {formatDateTimeFr(d.updatedAt)}</span>
+                        {d.lastJsonExportAt && (
+                          <span className="text-emerald-700 dark:text-emerald-400">
+                            Export JSON : {formatDateTimeFr(d.lastJsonExportAt)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {!isActive && (
+                        <button
+                          type="button"
+                          onClick={() => onSwitchDossier(d.id)}
+                          className="px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white font-semibold cursor-pointer"
+                        >
+                          Ouvrir
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onDuplicateDossier(d.id)}
+                        title="Dupliquer ce dossier"
+                        className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                      {dossiers.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteDossier(d.id)}
+                          title="Supprimer ce dossier local"
+                          className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-rose-600 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       )}
                     </div>
                   </div>
-
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    {!isActive && (
-                      <button
-                        type="button"
-                        onClick={() => onSwitchDossier(d.id)}
-                        className="px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white font-semibold cursor-pointer"
-                      >
-                        Ouvrir
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => onDuplicateDossier(d.id)}
-                      title="Dupliquer ce dossier"
-                      className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer"
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                    </button>
-                    {dossiers.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => onDeleteDossier(d.id)}
-                        title="Supprimer ce dossier local"
-                        className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-rose-50 dark:hover:bg-rose-950/50 text-rose-600 cursor-pointer"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
 
           {/* Instantanés automatiques du dossier actif */}
