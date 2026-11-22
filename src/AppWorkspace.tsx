@@ -445,6 +445,49 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
     };
   }, []);
 
+  // Synchronisation automatique vers l'application parente (B.O.C) via postMessage
+  const parentSyncInitRef = useRef(false);
+  const postDossierSyncToParent = useCallback((dossierActuel: ProjectData) => {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage(
+          {
+            type: 'PC_SYNC_DOSSIER',
+            payload: dossierActuel,
+          },
+          '*'
+        );
+      }
+    } catch {
+      // Ignorer si la fenêtre parente refuse postMessage
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!window.parent || window.parent === window) return;
+    if (!parentSyncInitRef.current) {
+      parentSyncInitRef.current = true;
+      postDossierSyncToParent(appData);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      postDossierSyncToParent(appData);
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [appData, postDossierSyncToParent]);
+
+  useEffect(() => {
+    if (!window.parent || window.parent === window) return;
+    const onParentMessage = (ev: MessageEvent) => {
+      const msg = ev.data as { type?: unknown } | null;
+      if (msg && typeof msg === 'object' && msg.type === 'PC_REQUEST_SYNC') {
+        postDossierSyncToParent(appDataRef.current);
+      }
+    };
+    window.addEventListener('message', onParentMessage);
+    return () => window.removeEventListener('message', onParentMessage);
+  }, [postDossierSyncToParent]);
+
   // Sauvegarde automatique périodique toutes les 7 minutes
   useEffect(() => {
     if (!autoSaveEnabled || !activeDossierId) return;
@@ -588,6 +631,7 @@ export const AppWorkspace: React.FC<AppWorkspaceProps> = ({ session, onSignOut }
       await markDossierExported(activeDossierId);
       setDossiers(await listDossiers());
     }
+    postDossierSyncToParent(appData);
     setIsDirtySinceJson(false);
     notify('success', `Sauvegarde exportée : ${safeName}_sauvegarde.json`);
   };
