@@ -4,6 +4,7 @@ import { ProjectData } from '../types/project';
 import { extraireQtesCochees, extraireQtesTotales, fmt, mnt, NRM, srcP } from '../utils/calculations';
 import { exportCumulExcel } from '../utils/excelExports';
 import { PrintHeader } from './PrintHeader';
+import { StickyTable } from './StickyTable';
 
 interface Tab6CumulProps {
   appData: ProjectData;
@@ -22,6 +23,7 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const [filterMode, setFilterMode] = useState<FilterMode>('tous');
+  const [pctSort, setPctSort] = useState<'none' | 'desc' | 'asc'>('none');
   const [justifDrafts, setJustifDrafts] = useState<Record<string, string>>({});
 
   const [cols, setCols] = useState({
@@ -70,7 +72,7 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({
 
   const filteredRows = useMemo(() => {
     const q = NRM(search);
-    return rows.filter((r) => {
+    const filtered = rows.filter((r) => {
       const matchSearch =
         !q ||
         NRM(r.p.id).includes(q) ||
@@ -85,7 +87,14 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({
       if (filterMode === 'masquer0') return r.qCumul !== 0;
       return true;
     });
-  }, [rows, search, filterMode]);
+    if (pctSort === 'desc') {
+      return [...filtered].sort((a, b) => b.pct - a.pct);
+    }
+    if (pctSort === 'asc') {
+      return [...filtered].sort((a, b) => a.pct - b.pct);
+    }
+    return filtered;
+  }, [rows, search, filterMode, pctSort]);
 
   const totals = useMemo(() => {
     let tBudget = 0;
@@ -197,7 +206,7 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({
               ['qteCumul', 'Q. Cumulée'],
               ['reel', 'Montant Réel (€)'],
               ['solde', 'Solde Qté'],
-              ['pct', '% Exécuté'],
+              ['pct', '% Utilisation'],
               ['ecart', 'Écart (€)'],
               ['justification', 'Justification'],
             ] as const
@@ -221,9 +230,9 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({
             Aucun poste dans le marché. Importez un bordereau 3P dans l'onglet 1.
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <StickyTable>
             <table className="w-full text-xs border-collapse">
-              <thead>
+              <thead className="[&_th]:bg-slate-100 dark:[&_th]:bg-slate-800 [&_th]:border-b [&_th]:border-slate-300 dark:[&_th]:border-slate-700">
                 <tr className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
                   <th className="py-2 px-2.5 text-left w-20">N°</th>
                   <th className="py-2 px-2.5 text-left">Description</th>
@@ -236,7 +245,25 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({
                   {cols.qteCumul && <th className="py-2 px-2.5 text-right">Cumul Qté</th>}
                   {cols.reel && <th className="py-2 px-2.5 text-right">Cumul (€)</th>}
                   {cols.solde && <th className="py-2 px-2.5 text-right">Solde Qté</th>}
-                  {cols.pct && <th className="py-2 px-2.5 text-center w-20">%</th>}
+                  {cols.pct && (
+                    <th className="py-2 px-2.5 text-center min-w-[112px] whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setPctSort((s) =>
+                            s === 'none' ? 'desc' : s === 'desc' ? 'asc' : 'none'
+                          )
+                        }
+                        title="Trier par pourcentage d'utilisation du poste (Q. Cumulée / Q. Prév.)"
+                        className="inline-flex items-center justify-center gap-1 hover:text-sky-700 dark:hover:text-sky-300 cursor-pointer"
+                      >
+                        <span>% Utilisation</span>
+                        <span className="text-[10px] opacity-75">
+                          {pctSort === 'desc' ? '▼' : pctSort === 'asc' ? '▲' : '⇅'}
+                        </span>
+                      </button>
+                    </th>
+                  )}
                   {cols.ecart && <th className="py-2 px-2.5 text-right">Écart (€)</th>}
                   {cols.justification && (
                     <th className="py-2 px-2.5 text-left min-w-[180px]">Justification</th>
@@ -324,25 +351,51 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({
                         </td>
                       )}
                       {cols.pct && (
-                        <td className="py-1.5 px-2.5 text-center font-mono tabular-nums">
-                          {dep10 ? (
-                            <span className="font-bold text-rose-700 dark:text-rose-400">
-                              {r.pct.toFixed(0)}% ⚠
-                            </span>
-                          ) : dep ? (
-                            <span className="font-bold text-amber-700 dark:text-amber-400">
-                              {r.pct.toFixed(0)}% !
+                        <td
+                          className="py-1.5 px-2.5 text-center font-mono tabular-nums"
+                          title={
+                            r.p.qte > 0
+                              ? `${fmt(r.qCumul, 3)} / ${fmt(r.p.qte, 3)} ${r.p.u} (${fmt(r.pct, 1)} %)`
+                              : 'Quantité prévue à 0'
+                          }
+                        >
+                          {r.p.qte <= 0 && r.qCumul > 0 ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 text-[10px] font-bold whitespace-nowrap">
+                              Hors prévu ⚠
                             </span>
                           ) : (
-                            <span
-                              className={
-                                r.pct >= 90
-                                  ? 'font-semibold text-amber-700 dark:text-amber-400'
-                                  : 'text-slate-500 dark:text-slate-400'
-                              }
-                            >
-                              {r.pct.toFixed(0)}%
-                            </span>
+                            <div className="flex flex-col items-center gap-1 min-w-[84px]">
+                              <span
+                                className={
+                                  dep10
+                                    ? 'font-bold text-rose-700 dark:text-rose-400'
+                                    : dep
+                                    ? 'font-bold text-amber-700 dark:text-amber-400'
+                                    : r.pct >= 90
+                                    ? 'font-semibold text-amber-700 dark:text-amber-400'
+                                    : r.pct > 0
+                                    ? 'font-semibold text-sky-700 dark:text-sky-300'
+                                    : 'text-slate-400 dark:text-slate-500'
+                                }
+                              >
+                                {fmt(r.pct, 1)}%
+                                {dep10 ? ' ⚠' : dep ? ' !' : ''}
+                              </span>
+                              <div className="no-print w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full transition-all ${
+                                    dep10
+                                      ? 'bg-rose-600'
+                                      : dep
+                                      ? 'bg-amber-500'
+                                      : r.pct >= 90
+                                      ? 'bg-amber-400'
+                                      : 'bg-sky-600 dark:bg-sky-500'
+                                  }`}
+                                  style={{ width: `${Math.min(100, Math.max(0, r.pct))}%` }}
+                                />
+                              </div>
+                            </div>
                           )}
                         </td>
                       )}
@@ -435,10 +488,10 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({
                       className={`py-2.5 px-2.5 text-center font-mono tabular-nums ${
                         totals.tPct > 100
                           ? 'text-rose-600 dark:text-rose-400'
-                          : 'text-amber-700 dark:text-amber-400'
+                          : 'text-sky-700 dark:text-sky-400'
                       }`}
                     >
-                      {totals.tPct.toFixed(1)}%
+                      {fmt(totals.tPct, 1)}%
                     </td>
                   )}
                   {cols.ecart && (
@@ -456,7 +509,7 @@ export const Tab6Cumul: React.FC<Tab6CumulProps> = ({
                 </tr>
               </tfoot>
             </table>
-          </div>
+          </StickyTable>
         )}
       </div>
     </div>

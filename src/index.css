@@ -125,6 +125,10 @@
     border: 1px solid #94a3b8 !important;
     padding: 2px 4px !important;
   }
+  .sticky-table-wrap > table > thead {
+    transform: none !important;
+    box-shadow: none !important;
+  }
   thead th {
     background: #e2e8f0 !important;
     color: #0f172a !important;

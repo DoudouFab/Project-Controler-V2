@@ -4,6 +4,7 @@ import { ProjectData } from '../types/project';
 import { fmt, mnt, srcP } from '../utils/calculations';
 import { exportEaValidesExcel } from '../utils/excelExports';
 import { PrintHeader } from './PrintHeader';
+import { StickyTable } from './StickyTable';
 
 interface Tab5EaValidesProps {
   appData: ProjectData;
@@ -348,9 +349,9 @@ export const Tab5EaValides: React.FC<Tab5EaValidesProps> = ({
             Aucun état d'avancement validé pour le moment. Clôturez un EA depuis l'onglet 4.
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <StickyTable>
             <table className="w-full text-xs border-collapse">
-              <thead>
+              <thead className="[&_th]:bg-slate-100 dark:[&_th]:bg-slate-800 [&_th]:border-b [&_th]:border-slate-300 dark:[&_th]:border-slate-700">
                 <tr className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
                   <th className="py-2.5 px-3 text-left w-32">N° EA</th>
                   <th className="py-2.5 px-3 text-left w-28">Date</th>
@@ -604,7 +605,7 @@ export const Tab5EaValides: React.FC<Tab5EaValidesProps> = ({
                 })}
               </tbody>
             </table>
-          </div>
+          </StickyTable>
         )}
       </div>
     </div>

@@ -18,6 +18,7 @@ import {
   exportEaEnCoursExcel,
 } from '../utils/excelExports';
 import { PrintHeader } from './PrintHeader';
+import { StickyTable } from './StickyTable';
 
 function todayIsoDate(): string {
   const d = new Date();
@@ -442,9 +443,9 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
             Aucune ligne cochée « EA » dans le Carnet de Mesurage (onglet 3).
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <StickyTable>
             <table className="w-full text-xs border-collapse">
-              <thead>
+              <thead className="[&_th]:bg-slate-100 dark:[&_th]:bg-slate-800 [&_th]:border-b [&_th]:border-slate-300 dark:[&_th]:border-slate-700">
                 <tr className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
                   <th className="py-2 px-2.5 text-left w-24">N° Poste</th>
                   <th className="py-2 px-2.5 text-left">Description</th>
@@ -571,7 +572,7 @@ export const Tab4EaEnCours: React.FC<Tab4EaEnCoursProps> = ({
                 </tr>
               </tfoot>
             </table>
-          </div>
+          </StickyTable>
         )}
       </div>
     </div>

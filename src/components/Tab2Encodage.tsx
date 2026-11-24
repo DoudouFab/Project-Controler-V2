@@ -10,6 +10,7 @@ import {
   NRM,
 } from '../utils/calculations';
 import { PrintHeader } from './PrintHeader';
+import { StickyTable } from './StickyTable';
 
 interface Tab2EncodageProps {
   appData: ProjectData;
@@ -979,9 +980,9 @@ export const Tab2Encodage: React.FC<Tab2EncodageProps> = ({
             </div>
           )}
 
-          <div className="overflow-x-auto">
+          <StickyTable>
             <table className="w-full text-xs border-collapse">
-              <thead>
+              <thead className="[&_th]:bg-slate-100 dark:[&_th]:bg-slate-800 [&_th]:border-b [&_th]:border-slate-300 dark:[&_th]:border-slate-700">
                 <tr className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-b border-slate-200 dark:border-slate-700">
                   <th className="no-print py-2 px-2 text-center w-8">
                     <input
@@ -1193,7 +1194,7 @@ export const Tab2Encodage: React.FC<Tab2EncodageProps> = ({
                 })}
               </tbody>
             </table>
-          </div>
+          </StickyTable>
         </div>
       </div>
     </div>

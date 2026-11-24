@@ -982,7 +982,7 @@ function appendCumulWorksheet(
     { width: 13 }, // J: Q. Cumulée
     { width: 15 }, // K: Montant Réel (€)
     { width: 13 }, // L: Solde Qté
-    { width: 11 }, // M: % Exécuté
+    { width: 13 }, // M: % Utilisation
     { width: 15 }, // N: Écart (€)
   ];
   if (includeJustification) {
@@ -1010,7 +1010,7 @@ function appendCumulWorksheet(
     { label: 'Q. Cumulée', align: 'right' },
     { label: 'Montant Réel (€)', align: 'right' },
     { label: 'Solde Qté', align: 'right' },
-    { label: '% Exécuté', align: 'right' },
+    { label: '% Utilisation', align: 'right' },
     { label: 'Écart (€)', align: 'right' },
   ];
   if (includeJustification) {
