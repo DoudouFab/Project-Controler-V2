@@ -106,6 +106,7 @@ function normalizeProjectData(raw: unknown): ProjectData {
         insp_qte: t.insp_qte !== undefined && t.insp_qte !== null ? Number(t.insp_qte) : null,
         cet_porter: Boolean(t.cet_porter),
         cet_qte: t.cet_qte !== undefined && t.cet_qte !== null ? Number(t.cet_qte) : null,
+        cet_porteeA: t.cet_porteeA !== undefined ? t.cet_porteeA : undefined,
         rocheux: t.rocheux || null,
         compact: t.compact || null,
         remplacement: t.remplacement || null,
